@@ -44,7 +44,7 @@ cd "${OVERLAYS_DIR}"
 find . -type f -print0 | while IFS= read -r -d '' file; do
     dest="${file#.}"  # strip leading dot
     dest_dir="$(dirname "${dest}")"
-    ssh_cmd "mkdir -p '${dest_dir}'" 2>/dev/null
+    ssh_cmd -n "mkdir -p '${dest_dir}'" 2>/dev/null
     scp_cmd "${file}" "root@localhost:${dest}" 2>/dev/null
     echo "  ${dest}"
 done
@@ -63,6 +63,20 @@ if [[ -d "${KDE_CONFIG_DIR}" ]]; then
                 scp_cmd "$cfg" "root@localhost:/etc/xdg/${cfg_name}" 2>/dev/null
             fi
             echo "  /etc/xdg/${cfg_name}"
+        fi
+    done
+fi
+
+# Also apply KDE configs to existing mars user (per-user overrides /etc/xdg/)
+echo "Applying KDE configs to mars user profile..."
+if [[ -d "${KDE_CONFIG_DIR}" ]]; then
+    for cfg in "${KDE_CONFIG_DIR}"/*; do
+        if [[ -f "$cfg" ]]; then
+            cfg_name="$(basename "$cfg")"
+            [[ "$cfg_name" == "sddm.conf" ]] && continue
+            scp_cmd "$cfg" "root@localhost:/home/mars/.config/${cfg_name}" 2>/dev/null
+            ssh_cmd "chown mars:mars '/home/mars/.config/${cfg_name}'" 2>/dev/null
+            echo "  /home/mars/.config/${cfg_name}"
         fi
     done
 fi

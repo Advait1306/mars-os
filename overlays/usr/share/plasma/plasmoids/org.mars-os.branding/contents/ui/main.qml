@@ -16,8 +16,8 @@ PlasmoidItem {
         Kirigami.Icon {
             id: marsIcon
             anchors.centerIn: parent
-            width: Kirigami.Units.iconSizes.smallMedium
-            height: Kirigami.Units.iconSizes.smallMedium
+            width: Kirigami.Units.iconSizes.small
+            height: Kirigami.Units.iconSizes.small
             source: Qt.resolvedUrl("../icons/mars-icon.svg")
             smooth: true
         }
