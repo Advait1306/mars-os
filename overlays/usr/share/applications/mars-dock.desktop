@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Mars Dock
+Exec=/usr/local/bin/mars-dock
+X-KDE-Wayland-Interfaces=org_kde_plasma_window_management
+NoDisplay=true

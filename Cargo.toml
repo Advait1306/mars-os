@@ -1,0 +1,3 @@
+[workspace]
+members = ["mars-dock"]
+resolver = "2"

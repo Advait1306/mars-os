@@ -4,3 +4,8 @@ build/
 *.img
 *.qcow2
 *.ami
+
+
+# Added by cargo
+
+/target
