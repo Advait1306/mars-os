@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     qemu-utils \
     rsync \
     kmod \
+    kpartx \
     udev \
     && rm -rf /var/lib/apt/lists/*
 

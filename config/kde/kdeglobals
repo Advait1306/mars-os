@@ -1,0 +1,23 @@
+[General]
+ColorSchemeHash=
+Name=MarsOS Dark
+font=Noto Sans,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+fixed=Noto Sans Mono,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+menuFont=Noto Sans,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+smallestReadableFont=Noto Sans,9,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+toolBarFont=Noto Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+desktopFont=Noto Sans,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
+XftAntialias=true
+XftHintStyle=hintslight
+XftSubPixel=rgb
+
+[KDE]
+LookAndFeelPackage=org.kde.breezedark.desktop
+SingleClick=false
+AnimationDurationFactor=1
+
+[Icons]
+Theme=breeze-dark
+
+[WM]
+activeFont=Noto Sans,11,-1,5,600,0,0,0,0,0,0,0,0,0,0,1

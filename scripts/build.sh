@@ -4,7 +4,7 @@
 # Must be run as root on a Debian/Ubuntu system (e.g., the EC2 build instance).
 #
 # Usage: sudo bash scripts/build.sh [--desktop]
-#   --desktop    Include GNOME desktop packages (Phase 2)
+#   --desktop    Include KDE Plasma desktop packages (Phase 2)
 #
 # Output: build/mars-os.img (raw disk image)
 
@@ -149,20 +149,25 @@ chroot "${ROOTFS_DIR}" /bin/bash -c "
 
 # ─── Step 9: Desktop (optional) ───
 if [[ "${INCLUDE_DESKTOP}" == "true" ]]; then
-    echo ">>> Step 9: Installing desktop (GNOME + Wayland)..."
+    echo ">>> Step 9: Installing desktop (KDE Plasma + Wayland)..."
 
     # Copy chroot-setup script and configs
     cp "${SCRIPT_DIR}/chroot-setup.sh" "${ROOTFS_DIR}/tmp/chroot-setup.sh"
     cp "${PROJECT_DIR}/config/packages/desktop.list" "${ROOTFS_DIR}/tmp/desktop.list"
 
-    if [[ -f "${PROJECT_DIR}/config/gnome/mars-defaults.gschema.override" ]]; then
-        cp "${PROJECT_DIR}/config/gnome/mars-defaults.gschema.override" "${ROOTFS_DIR}/tmp/mars-defaults.gschema.override"
+    # Copy KDE config files and SDDM config
+    if [[ -d "${PROJECT_DIR}/config/kde" ]]; then
+        mkdir -p "${ROOTFS_DIR}/tmp/kde-config"
+        cp "${PROJECT_DIR}/config/kde/"* "${ROOTFS_DIR}/tmp/kde-config/"
+    fi
+    if [[ -f "${PROJECT_DIR}/config/kde/sddm.conf" ]]; then
+        cp "${PROJECT_DIR}/config/kde/sddm.conf" "${ROOTFS_DIR}/tmp/sddm.conf"
     fi
 
     chroot "${ROOTFS_DIR}" /bin/bash /tmp/chroot-setup.sh
 
     # Clean up
-    rm -f "${ROOTFS_DIR}/tmp/chroot-setup.sh" "${ROOTFS_DIR}/tmp/desktop.list" "${ROOTFS_DIR}/tmp/mars-defaults.gschema.override"
+    rm -rf "${ROOTFS_DIR}/tmp/chroot-setup.sh" "${ROOTFS_DIR}/tmp/desktop.list" "${ROOTFS_DIR}/tmp/kde-config" "${ROOTFS_DIR}/tmp/sddm.conf"
 fi
 
 # ─── Step 10: Copy overlays ───

@@ -1,41 +1,33 @@
 # MarsOS — Desktop packages (Phase 2)
-# GNOME on Wayland with full desktop experience
+# KDE Plasma on Wayland with full desktop experience
 
-# GNOME Desktop
-gnome-shell
-gnome-session
-gnome-settings-daemon
-gnome-control-center
-gnome-tweaks
-gnome-shell-extensions
-gnome-backgrounds
-
-# Display manager
-gdm3
+# KDE Plasma Desktop
+kde-plasma-desktop
+plasma-nm
+plasma-pa
+plasma-disks
+plasma-systemmonitor
+plasma-thunderbolt
+powerdevil
+bluedevil
+kscreen
+sddm
 
 # Wayland
 xwayland
 
-# File manager
-nautilus
+# KDE Applications
+dolphin
+konsole
+kate
+ark
+gwenview
+okular
+kde-spectacle
+kcalc
+kio-extras
 
-# Terminal
-gnome-terminal
-
-# Text editor
-gnome-text-editor
-
-# System monitor
-gnome-system-monitor
-
-# Screenshot / screen recording
-gnome-screenshot
-
-# Disk utility
-gnome-disk-utility
-
-# Software center
-gnome-software
+# File indexing (Dolphin search — pulled in by kde-plasma-desktop)
 
 # Browser
 firefox-esr
@@ -46,16 +38,15 @@ pipewire-pulse
 pipewire-alsa
 wireplumber
 
-# Networking GUI
-network-manager-gnome
+# Networking
+network-manager
 
 # Bluetooth
 bluez
-gnome-bluetooth-sendto
 
 # Printing
 cups
-system-config-printer
+print-manager
 
 # Fonts
 fonts-noto
@@ -63,30 +54,19 @@ fonts-noto-color-emoji
 fonts-liberation
 
 # Themes & appearance
-adwaita-icon-theme
-gnome-themes-extra
+breeze
+breeze-icon-theme
+breeze-cursor-theme
 
 # GPU / graphics (Mesa)
 mesa-utils
 mesa-vulkan-drivers
 libgl1-mesa-dri
 
-# Input
+# XDG utilities
 xdg-utils
 xdg-user-dirs
-xdg-user-dirs-gtk
+xdg-desktop-portal-kde
 
-# Archive support
-file-roller
-
-# Image viewer
-eog
-
-# Document viewer
-evince
-
-# Calculator
-gnome-calculator
-
-# Calendar / contacts
-gnome-calendar
+# Qt theming
+qt6-wayland

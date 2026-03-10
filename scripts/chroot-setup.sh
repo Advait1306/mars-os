@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MarsOS — Chroot Setup Script
 # This runs INSIDE the chroot during build to install and configure
-# the GNOME desktop environment.
+# the KDE Plasma desktop environment.
 # Called by build.sh — do not run directly.
 
 set -euo pipefail
@@ -16,17 +16,16 @@ DESKTOP_PACKAGES=$(grep -v '^#' /tmp/desktop.list | grep -v '^\s*$' | tr '\n' ' 
 apt-get update
 apt-get install -y ${DESKTOP_PACKAGES}
 
-# ─── Configure GDM (display manager) ───
-echo ">>> [chroot] Configuring GDM..."
+# ─── Configure SDDM (display manager) ───
+echo ">>> [chroot] Configuring SDDM..."
 
-# Enable GDM
-systemctl enable gdm
+# Enable SDDM
+systemctl enable sddm
 
-# Force Wayland as default session
-mkdir -p /etc/gdm3
-if [[ -f /etc/gdm3/daemon.conf ]]; then
-    sed -i 's/#WaylandEnable=false/WaylandEnable=true/' /etc/gdm3/daemon.conf
-    sed -i 's/WaylandEnable=false/WaylandEnable=true/' /etc/gdm3/daemon.conf
+# Install SDDM Wayland config
+if [[ -f /tmp/sddm.conf ]]; then
+    mkdir -p /etc/sddm.conf.d
+    cp /tmp/sddm.conf /etc/sddm.conf.d/mars-os.conf
 fi
 
 # ─── Configure PipeWire for audio ───
@@ -37,20 +36,27 @@ systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.serv
 echo ">>> [chroot] Enabling NetworkManager..."
 systemctl enable NetworkManager
 
-# ─── Apply GNOME defaults ───
-if [[ -f /tmp/mars-defaults.gschema.override ]]; then
-    echo ">>> [chroot] Applying MarsOS GNOME defaults..."
-    cp /tmp/mars-defaults.gschema.override /usr/share/glib-2.0/schemas/90_mars-defaults.gschema.override
-    glib-compile-schemas /usr/share/glib-2.0/schemas/
-fi
+# ─── Apply KDE defaults ───
+echo ">>> [chroot] Applying MarsOS KDE defaults..."
 
-# ─── Set default session to GNOME on Wayland ───
-echo ">>> [chroot] Setting default session to GNOME Wayland..."
+# KDE uses config files in /etc/xdg/ for system-wide defaults
+KDE_DEFAULTS_DIR="/etc/xdg"
+mkdir -p "${KDE_DEFAULTS_DIR}"
+
+for cfg in /tmp/kde-config/*; do
+    if [[ -f "$cfg" ]]; then
+        cp "$cfg" "${KDE_DEFAULTS_DIR}/$(basename "$cfg")"
+        echo "  Installed: $(basename "$cfg")"
+    fi
+done
+
+# ─── Set default session to Plasma Wayland ───
+echo ">>> [chroot] Setting default session to Plasma Wayland..."
 mkdir -p /var/lib/AccountsService/users
 cat > /var/lib/AccountsService/users/mars <<EOF
 [User]
-Session=gnome
-XSession=gnome
+Session=plasma
+XSession=plasma
 SystemAccount=false
 EOF
 

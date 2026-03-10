@@ -1,8 +1,0 @@
-{
-  "uuid": "mars-branding@mars-os.io",
-  "name": "MarsOS Branding",
-  "description": "Replaces the Activities button with the MarsOS logo",
-  "shell-version": ["48"],
-  "version": 1,
-  "url": ""
-}

@@ -1,0 +1,22 @@
+{
+    "KPlugin": {
+        "Id": "org.mars-os.branding",
+        "Name": "MarsOS Branding",
+        "Description": "Displays the MarsOS logo in the panel",
+        "Icon": "mars-icon",
+        "Authors": [
+            {
+                "Name": "MarsOS",
+                "Email": "dev@mars-os.io"
+            }
+        ],
+        "Category": "Utilities",
+        "Version": "1.0",
+        "License": "GPL-3.0",
+        "Website": ""
+    },
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml",
+    "KPackageStructure": "Plasma/Applet"
+}
