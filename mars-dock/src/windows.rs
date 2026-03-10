@@ -146,8 +146,8 @@ impl WindowTracker {
 }
 
 // State flags from the plasma-window-management protocol enum
-const STATE_IS_ACTIVE: u32 = 0x1; // is_active
-const STATE_SKIP_TASKBAR: u32 = 0x4000; // skip_taskbar
+const STATE_IS_ACTIVE: u32 = 0x1;
+const STATE_SKIP_TASKBAR: u32 = 0x1000;
 
 /// Dispatch handler for org_kde_plasma_window_management
 impl<D> Dispatch<org_kde_plasma_window_management::OrgKdePlasmaWindowManagement, (), D>
@@ -210,6 +210,7 @@ where
 
         match event {
             org_kde_plasma_window::Event::TitleChanged { title } => {
+                log::debug!("Window {} title: {}", window_id, title);
                 tracker.update_window(window_id, |w| w.title = title);
             }
             org_kde_plasma_window::Event::AppIdChanged { app_id } => {
@@ -217,12 +218,18 @@ where
                 tracker.update_window(window_id, |w| w.app_id = app_id);
             }
             org_kde_plasma_window::Event::ThemedIconNameChanged { name } => {
+                log::debug!("Window {} icon: {}", window_id, name);
                 tracker.update_window(window_id, |w| w.icon_name = name);
             }
             org_kde_plasma_window::Event::StateChanged { flags } => {
+                log::debug!("Window {} state flags: {:#06x}", window_id, flags);
                 tracker.update_window(window_id, |w| {
                     w.is_active = flags & STATE_IS_ACTIVE != 0;
-                    w.skip_taskbar = flags & STATE_SKIP_TASKBAR != 0;
+                    // Sticky: once skip_taskbar is set, keep it (protocol sends
+                    // transient 0x0000 during init that would falsely clear it)
+                    if flags & STATE_SKIP_TASKBAR != 0 {
+                        w.skip_taskbar = true;
+                    }
                 });
             }
             org_kde_plasma_window::Event::Unmapped => {
