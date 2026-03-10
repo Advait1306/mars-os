@@ -16,14 +16,14 @@ impl Spring {
     /// Create a spring at rest at the given value.
     pub fn new(initial: f32) -> Self {
         // Critical damping: damping = 2 * sqrt(stiffness)
-        // stiffness=170 → critical damping ≈ 26.1
-        // Using 26.0 for near-critically-damped (barely perceptible overshoot)
+        // stiffness=680 → critical damping ≈ 52.2
+        // 4x stiffer than original (170) for ~2x faster settle time
         Self {
             value: initial,
             target: initial,
             velocity: 0.0,
-            stiffness: 170.0,
-            damping: 26.0,
+            stiffness: 680.0,
+            damping: 52.0,
         }
     }
 
@@ -41,6 +41,12 @@ impl Spring {
     /// Returns true when the spring has effectively reached its target.
     pub fn is_settled(&self) -> bool {
         (self.value - self.target).abs() < 0.5 && self.velocity.abs() < 0.5
+    }
+
+    /// Returns true when the spring is close enough to trigger the next phase.
+    /// Looser than is_settled() to avoid visible pauses between animation phases.
+    pub fn is_near_target(&self, threshold: f32) -> bool {
+        (self.value - self.target).abs() < threshold
     }
 
     /// Snap the spring to its target with zero velocity.

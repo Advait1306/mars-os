@@ -39,7 +39,8 @@ pub fn dock_height() -> u32 {
 pub struct RenderSlot<'a> {
     pub app: &'a DockApp,
     pub icon: Option<&'a Pixmap>,
-    pub y_offset: f32, // pixels below normal position (0 = resting)
+    pub x_offset: f32, // horizontal offset from surface center (left edge of icon)
+    pub y_offset: f32,  // pixels below normal position (0 = resting)
     pub show_dot: bool,
 }
 
@@ -101,14 +102,12 @@ pub fn render_dock(
         surface_height,
     );
 
-    // Compute icon x-positions centered within the background
-    let slot_count = slots.len();
-    let total_icons_width = slot_count as f32 * ICON_SIZE as f32
-        + (slot_count.saturating_sub(1)) as f32 * ICON_PADDING as f32;
-    let start_x = bg_x + (bg_width - total_icons_width) / 2.0;
+    // Each slot carries its own x_offset (from surface center), animated by a spring.
+    // This lets icons smoothly slide to new positions when the layout changes.
+    let center_x = surface_width as f32 / 2.0;
 
-    for (i, slot) in slots.iter().enumerate() {
-        let x = start_x + i as f32 * (ICON_SIZE + ICON_PADDING) as f32;
+    for slot in slots.iter() {
+        let x = center_x + slot.x_offset;
         let base_y = (surface_height as f32 - ICON_SIZE as f32) / 2.0 - 2.0;
         let y = base_y + slot.y_offset;
 
