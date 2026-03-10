@@ -1,6 +1,6 @@
 # MarsOS
 
-A custom Linux distribution based on Debian Trixie (13) with GNOME on Wayland.
+A custom Linux distribution based on Debian Trixie (13) with KDE Plasma on Wayland.
 
 ## Quick Start
 
@@ -16,7 +16,7 @@ brew install qemu
 bash scripts/test-qemu-arm64.sh
 ```
 
-A QEMU window will open with the GNOME login screen.
+A QEMU window will open with the SDDM login screen.
 
 - **User:** `mars` / **Password:** `mars`
 - **Root:** `root` / **Password:** `mars`
@@ -29,14 +29,26 @@ ssh -p 2222 mars@localhost
 ssh -p 2222 root@localhost
 ```
 
+### Apply Customizations
+
+After modifying files in `overlays/` or `config/kde/`, push changes to the running VM:
+
+```bash
+bash scripts/apply-overlays.sh
+# Then reboot the VM:
+ssh -p 2222 root@localhost 'reboot'
+```
+
 ## What's Included
 
-- **Desktop:** GNOME on Wayland (dark theme, Noto fonts)
-- **Audio:** PipeWire (Intel HDA via QEMU)
+- **Desktop:** KDE Plasma on Wayland (Breeze Dark theme, Noto fonts)
+- **Display Manager:** SDDM (Wayland mode)
+- **Audio:** PipeWire
 - **Browser:** Firefox ESR
-- **Apps:** Nautilus, Terminal, Text Editor, Calculator, Calendar, Evince, System Monitor, Disk Utility
+- **Apps:** Dolphin, Konsole, Kate, KCalc, Gwenview, Okular, System Monitor
 - **Networking:** NetworkManager
 - **Printing:** CUPS
+- **Custom Panel:** Mars-branded start menu icon, task manager, system tray, digital clock
 
 ## Project Structure
 
@@ -45,28 +57,37 @@ os/
 ├── config/
 │   ├── packages/
 │   │   ├── base.list                          # Minimal system packages
-│   │   └── desktop.list                       # GNOME + Wayland packages
+│   │   └── desktop.list                       # KDE Plasma + Wayland packages
 │   ├── kernel/
 │   │   └── mars-kernel.conf                   # Kernel config overrides (future)
-│   └── gnome/
-│       └── mars-defaults.gschema.override     # GNOME default settings
+│   └── kde/
+│       ├── kdeglobals                         # Fonts, theme, icons, colors
+│       ├── kwinrc                             # Compositor, effects, window mgmt
+│       ├── plasmarc                           # Plasma style/theme
+│       ├── plasma-org.kde.plasma.desktop-appletsrc  # Panel & widget layout
+│       ├── kcminputrc                         # Touchpad settings
+│       ├── kscreenlockerrc                    # Screen lock settings
+│       ├── powermanagementprofilesrc          # Power/sleep settings
+│       └── sddm.conf                         # Display manager config
 ├── scripts/
 │   ├── build.sh                               # Main build script (x86_64, runs on EC2)
 │   ├── build-arm64.sh                         # ARM64 build (runs inside Docker)
 │   ├── build-local.sh                         # Local build wrapper for macOS
 │   ├── setup-ec2.sh                           # Provisions EC2 build instance
-│   ├── chroot-setup.sh                        # GNOME setup inside chroot
+│   ├── chroot-setup.sh                        # Desktop setup inside chroot
 │   ├── make-iso.sh                            # Create bootable ISO from disk image
 │   ├── patch-image.sh                         # Patch Debian cloud image (Docker)
+│   ├── apply-overlays.sh                      # Push overlays & KDE configs to running VM
 │   ├── test-qemu.sh                           # Boot x86_64 image in QEMU
 │   └── test-qemu-arm64.sh                     # Boot ARM64 image in QEMU (macOS)
-├── patches/                                   # Upstream package patches
 ├── overlays/                                  # Files copied directly into the image
-│   ├── etc/skel/                              # Default user home skeleton
-│   └── usr/share/mars-os/                     # Branding assets
+│   ├── etc/xdg/autostart/                     # Autostart entries
+│   └── usr/share/
+│       ├── plasma/plasmoids/org.mars-os.branding/  # Mars branding plasmoid
+│       └── applications/                      # Desktop entries
 ├── build/                                     # Build output (gitignored)
 │   ├── mars-os-arm64.qcow2                    # Working image (with snapshots)
-│   └── mars-os-0.1-arm64.qcow2               # Compressed release image (2.7 GB)
+│   └── mars-os-0.1-arm64.qcow2               # Compressed release image
 ├── Dockerfile.build                           # Docker build environment
 ├── .env.example                               # Config template
 └── .gitignore
@@ -97,12 +118,10 @@ docker run --rm --privileged \
 qemu-img convert -f raw -O qcow2 build/mars-os-arm64.raw build/mars-os-arm64.qcow2
 rm build/mars-os-arm64.raw
 
-# 4. Boot, then install GNOME via SSH
+# 4. Boot, then install KDE Plasma via SSH
 bash scripts/test-qemu-arm64.sh
 # (In another terminal, once VM is up:)
-scp -P 2222 config/packages/desktop.list root@localhost:/tmp/
-scp -P 2222 config/gnome/mars-defaults.gschema.override root@localhost:/tmp/
-ssh -p 2222 root@localhost  # then run chroot-setup.sh commands manually
+bash scripts/apply-overlays.sh
 
 # 5. Create compressed release image
 qemu-img convert -O qcow2 -c build/mars-os-arm64.qcow2 build/mars-os-0.1-arm64.qcow2
@@ -124,7 +143,7 @@ sudo bash scripts/test-qemu.sh --iso
 
 ```
 ┌────────────────────────────────┐
-│  GNOME Desktop (Wayland)       │
+│  KDE Plasma Desktop (Wayland)  │
 ├────────────────────────────────┤
 │  MarsOS customizations/theming │
 ├────────────────────────────────┤
@@ -136,7 +155,7 @@ sudo bash scripts/test-qemu.sh --iso
 
 ## Roadmap
 
-- [ ] Branding (wallpapers, Plymouth boot splash, GDM theme)
+- [ ] Branding (wallpapers, Plymouth boot splash, SDDM theme)
 - [ ] Calamares installer
 - [ ] x86_64 build on EC2
 - [ ] Android app support (Waydroid)
