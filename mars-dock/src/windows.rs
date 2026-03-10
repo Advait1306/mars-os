@@ -5,8 +5,7 @@ use std::collections::BTreeMap;
 
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols_plasma::plasma_window_management::client::{
-    org_kde_plasma_window,
-    org_kde_plasma_window_management,
+    org_kde_plasma_window, org_kde_plasma_window_management,
 };
 
 /// Grouped application entry for the dock
@@ -147,11 +146,12 @@ impl WindowTracker {
 }
 
 // State flags from the plasma-window-management protocol enum
-const STATE_IS_ACTIVE: u32 = 0x1;       // is_active
+const STATE_IS_ACTIVE: u32 = 0x1; // is_active
 const STATE_SKIP_TASKBAR: u32 = 0x4000; // skip_taskbar
 
 /// Dispatch handler for org_kde_plasma_window_management
-impl<D> Dispatch<org_kde_plasma_window_management::OrgKdePlasmaWindowManagement, (), D> for WindowTracker
+impl<D> Dispatch<org_kde_plasma_window_management::OrgKdePlasmaWindowManagement, (), D>
+    for WindowTracker
 where
     D: Dispatch<org_kde_plasma_window_management::OrgKdePlasmaWindowManagement, ()>
         + Dispatch<org_kde_plasma_window::OrgKdePlasmaWindow, u32>
@@ -240,10 +240,7 @@ where
 
 /// Resolve the icon name for an application from .desktop files
 fn resolve_icon_name(app_id: &str) -> String {
-    let desktop_paths = [
-        "/usr/share/applications",
-        "/usr/local/share/applications",
-    ];
+    let desktop_paths = ["/usr/share/applications", "/usr/local/share/applications"];
 
     for base in &desktop_paths {
         for name in &[

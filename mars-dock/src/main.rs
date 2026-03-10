@@ -1,3 +1,4 @@
+mod animation;
 mod dock;
 mod render;
 mod windows;
