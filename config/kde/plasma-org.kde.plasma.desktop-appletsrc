@@ -26,6 +26,9 @@ plugin=org.kde.panel
 immutability=1
 plugin=org.kde.plasma.kickoff
 
+[Containments][2][Applets][3][Configuration][General]
+icon=/usr/share/plasma/plasmoids/org.mars-os.branding/contents/icons/mars-icon.svg
+
 [Containments][2][Applets][4]
 immutability=1
 plugin=org.kde.plasma.icontasks
