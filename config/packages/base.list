@@ -1,0 +1,50 @@
+# MarsOS — Base system packages (Phase 1)
+# Minimal set to boot to a shell prompt
+
+# Kernel
+linux-image-amd64
+
+# Init & system
+systemd
+systemd-sysv
+dbus
+
+# Bootloader
+grub-pc
+grub-efi-amd64
+
+# Networking
+iproute2
+iputils-ping
+ifupdown
+dhcpcd
+netbase
+wget
+curl
+ca-certificates
+
+# Filesystem
+e2fsprogs
+dosfstools
+btrfs-progs
+
+# Console essentials
+bash
+coreutils
+util-linux
+procps
+kmod
+udev
+sudo
+passwd
+adduser
+apt
+apt-utils
+locales
+console-setup
+keyboard-configuration
+
+# Editors & tools
+nano
+less
+man-db

@@ -1,0 +1,35 @@
+# MarsOS — ARM64 Build Container
+# Used on macOS to run debootstrap inside a Debian container.
+# Usage: docker build -f Dockerfile.build -t mars-os-builder .
+#        docker run --privileged -v $(pwd)/build:/out mars-os-builder
+
+FROM debian:trixie
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    debootstrap \
+    xorriso \
+    grub-efi-arm64-bin \
+    mtools \
+    squashfs-tools \
+    dosfstools \
+    e2fsprogs \
+    parted \
+    gdisk \
+    qemu-utils \
+    rsync \
+    kmod \
+    udev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /mars-os
+
+COPY config/ config/
+COPY scripts/ scripts/
+COPY overlays/ overlays/
+
+# Output directory mounted from host
+VOLUME /out
+
+CMD ["bash", "scripts/build-arm64.sh"]

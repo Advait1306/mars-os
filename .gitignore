@@ -1,0 +1,6 @@
+.env
+build/
+*.iso
+*.img
+*.qcow2
+*.ami

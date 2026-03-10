@@ -1,0 +1,10 @@
+/* MarsOS branding — Activities button icon */
+.mars-activities-icon {
+  background-image: url("icons/mars-logo.svg");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 4px;
+}

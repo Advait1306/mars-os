@@ -1,0 +1,92 @@
+# MarsOS — Desktop packages (Phase 2)
+# GNOME on Wayland with full desktop experience
+
+# GNOME Desktop
+gnome-shell
+gnome-session
+gnome-settings-daemon
+gnome-control-center
+gnome-tweaks
+gnome-shell-extensions
+gnome-backgrounds
+
+# Display manager
+gdm3
+
+# Wayland
+xwayland
+
+# File manager
+nautilus
+
+# Terminal
+gnome-terminal
+
+# Text editor
+gnome-text-editor
+
+# System monitor
+gnome-system-monitor
+
+# Screenshot / screen recording
+gnome-screenshot
+
+# Disk utility
+gnome-disk-utility
+
+# Software center
+gnome-software
+
+# Browser
+firefox-esr
+
+# Audio (PipeWire)
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+
+# Networking GUI
+network-manager-gnome
+
+# Bluetooth
+bluez
+gnome-bluetooth-sendto
+
+# Printing
+cups
+system-config-printer
+
+# Fonts
+fonts-noto
+fonts-noto-color-emoji
+fonts-liberation
+
+# Themes & appearance
+adwaita-icon-theme
+gnome-themes-extra
+
+# GPU / graphics (Mesa)
+mesa-utils
+mesa-vulkan-drivers
+libgl1-mesa-dri
+
+# Input
+xdg-utils
+xdg-user-dirs
+xdg-user-dirs-gtk
+
+# Archive support
+file-roller
+
+# Image viewer
+eog
+
+# Document viewer
+evince
+
+# Calculator
+gnome-calculator
+
+# Calendar / contacts
+gnome-calendar
