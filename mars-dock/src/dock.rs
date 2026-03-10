@@ -234,19 +234,21 @@ impl Dock {
             }
         }
 
-        // Add new apps (hidden below dock until resize settles)
+        // Add new apps
         let had_visible = !old_ids.is_empty();
         let mut has_new = false;
         for (app, icon) in new_apps.into_iter().zip(new_icons.into_iter()) {
             if !old_ids.contains(&app.app_id) {
                 has_new = true;
-                let (y_spring, entering) = if had_visible {
-                    let mut s = Spring::new(render::DOCK_HEIGHT as f32);
-                    s.set_target(render::DOCK_HEIGHT as f32);
-                    (s, true)
+                // Always start hidden below dock and slide up.
+                // If had_visible, entering=true delays slide-up until resize settles.
+                // If first icon, entering=false so y animates immediately with width.
+                let mut y_spring = Spring::new(render::DOCK_HEIGHT as f32);
+                if had_visible {
+                    y_spring.set_target(render::DOCK_HEIGHT as f32);
                 } else {
-                    (Spring::new(0.0), false)
-                };
+                    y_spring.set_target(0.0);
+                }
                 let x_spring = Spring::new(0.0);
                 self.anim_slots.push(AnimSlot {
                     app_id: app.app_id.clone(),
@@ -254,34 +256,33 @@ impl Dock {
                     icon,
                     y_spring,
                     x_spring,
-                    entering,
+                    entering: had_visible,
                     leaving: false,
                 });
             }
         }
 
-        // x targets for ALL slots (leaving icons hold their position)
-        let snap = !had_visible;
-        self.recompute_x_targets(snap);
-
-        // Snap entering icons' x to target (hidden, no need to animate x)
-        for slot in &mut self.anim_slots {
-            if slot.entering {
-                slot.x_spring.settle();
+        // Compute x targets for all slots
+        if had_visible {
+            // Animate existing icons to new positions; snap entering icons' x
+            self.recompute_x_targets(false);
+            for slot in &mut self.anim_slots {
+                if slot.entering {
+                    slot.x_spring.settle();
+                }
             }
+        } else {
+            // First appearance — snap everything
+            self.recompute_x_targets(true);
         }
 
         // Width = dock_width for ALL current slots (leaving ones still hold space)
         let target_width = render::dock_width(self.anim_slots.len()) as f32;
+        self.width_spring.set_target(target_width);
 
-        if !had_visible {
-            self.width_spring.set_target(target_width);
-            self.width_spring.settle();
-        } else {
-            self.width_spring.set_target(target_width);
-        }
-
-        // Ensure surface is large enough (only grow, never shrink mid-animation)
+        // Jump surface to target width immediately. The dock is BOTTOM-anchored
+        // and compositor-centered, so surface_width changes don't shift icons in
+        // screen coordinates — the compositor re-centers the surface.
         let needed = (self.width_spring.value.ceil() as u32).max(target_width as u32);
         if needed > self.width {
             self.width = needed;
@@ -391,7 +392,7 @@ impl Dock {
                 }
             }
         } else {
-            // During animation, only GROW the surface, never shrink
+            // During animation, ensure surface fits the target
             let needed = (self.width_spring.value.ceil() as u32)
                 .max(self.width_spring.target as u32);
             if needed > self.width {
