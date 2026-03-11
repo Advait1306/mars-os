@@ -109,7 +109,7 @@ impl Dock {
         let surface = compositor_state.create_surface(&qh);
 
         let layer_surface =
-            layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("mars-dock"), None);
+            layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("dock"), None);
 
         layer_surface.set_anchor(Anchor::BOTTOM);
         layer_surface.set_size(width, height);

@@ -5,7 +5,7 @@ mod windows;
 
 fn main() {
     env_logger::init();
-    log::info!("Starting mars-dock");
+    log::info!("Starting dock");
 
     dock::Dock::run();
 }
