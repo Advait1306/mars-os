@@ -122,3 +122,24 @@ pub fn adjust_brightness(delta: f32) {
         .args(["set", &pct])
         .spawn();
 }
+
+pub fn logout() {
+    let _ = Command::new("dbus-send")
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+        .args([
+            "--session",
+            "--type=method_call",
+            "--dest=org.kde.Shutdown",
+            "/Shutdown",
+            "org.kde.Shutdown.logout",
+        ])
+        .spawn();
+}
+
+pub fn restart() {
+    let _ = Command::new("systemctl").arg("reboot").spawn();
+}
+
+pub fn shutdown() {
+    let _ = Command::new("systemctl").arg("poweroff").spawn();
+}

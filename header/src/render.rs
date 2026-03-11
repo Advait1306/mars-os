@@ -18,6 +18,20 @@ const SLIDER_TRACK_H: f32 = 4.0;
 const SLIDER_KNOB_R: f32 = 6.0;
 const POPUP_TEXT_GAP: f32 = 10.0;
 
+// ---- Menu popup constants ----
+pub const MENU_POPUP_WIDTH: u32 = 160;
+pub const MENU_POPUP_HEIGHT: u32 = 104; // 4 + 32*3 + 4
+const MENU_ITEM_HEIGHT: f32 = 32.0;
+const MENU_PAD_Y: f32 = 4.0;
+const MENU_PAD_X: f32 = 12.0;
+const MENU_ICON_SIZE: f32 = 14.0;
+const MENU_ICON_TEXT_GAP: f32 = 8.0;
+const MENU_ITEMS: [&str; 3] = ["Log Out", "Restart", "Shut Down"];
+
+// ---- Header left side ----
+const LEFT_PAD: f32 = 6.0;
+const MARS_ICON_SIZE: f32 = 14.0;
+
 // ---- Colors ----
 const TEXT_COLOR: [u8; 4] = [255, 255, 255, 200];
 const DIM_COLOR: [u8; 4] = [255, 255, 255, 100];
@@ -30,6 +44,7 @@ fn bg_color() -> Color {
 
 /// X-coordinate ranges for interactive zones on the header bar.
 pub struct HitZones {
+    pub mars_icon: (f32, f32),
     pub volume: (f32, f32),
     pub brightness: Option<(f32, f32)>,
 }
@@ -84,6 +99,14 @@ pub fn render_header(
         paint.set_color(bg_color());
         pixmap.fill_rect(rect, &paint, Transform::identity(), None);
     }
+
+    // ---- Mars icon (leftmost) ----
+    draw_mars_icon(
+        &mut pixmap,
+        LEFT_PAD,
+        (BAR_HEIGHT as f32 - MARS_ICON_SIZE) / 2.0,
+        MARS_ICON_SIZE,
+    );
 
     let baseline = 15.0;
     let mut x = width as f32 - RIGHT_PAD;
@@ -147,6 +170,7 @@ pub fn render_header(
     };
 
     let zones = HitZones {
+        mars_icon: (0.0, LEFT_PAD + MARS_ICON_SIZE + 4.0),
         volume: (vol_left, vol_right),
         brightness: brightness_zone,
     };
@@ -365,6 +389,258 @@ fn draw_sun_icon(pixmap: &mut Pixmap, x: f32, y: f32, size: f32) {
         if let Some(path) = pb.finish() {
             pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
+    }
+}
+
+// ---- Menu popup ----
+
+pub fn menu_item_at(y: f32) -> Option<usize> {
+    let item_y = y - MENU_PAD_Y;
+    if item_y < 0.0 {
+        return None;
+    }
+    let idx = (item_y / MENU_ITEM_HEIGHT) as usize;
+    if idx < MENU_ITEMS.len() {
+        Some(idx)
+    } else {
+        None
+    }
+}
+
+pub fn render_menu_popup(
+    font: &fontdue::Font,
+    width: u32,
+    height: u32,
+    hover_item: Option<usize>,
+) -> Pixmap {
+    let mut pixmap = Pixmap::new(width, height).unwrap();
+
+    // Background
+    draw_rounded_rect(
+        &mut pixmap,
+        0.0,
+        0.0,
+        width as f32,
+        height as f32,
+        POPUP_RADIUS,
+        bg_color(),
+    );
+    // Border
+    draw_rounded_rect_stroke(
+        &mut pixmap,
+        0.5,
+        0.5,
+        width as f32 - 1.0,
+        height as f32 - 1.0,
+        POPUP_RADIUS,
+        Color::from_rgba8(255, 255, 255, 20),
+    );
+
+    let icon_fns: [fn(&mut Pixmap, f32, f32, f32); 3] = [
+        draw_logout_icon,
+        draw_restart_icon,
+        draw_power_icon,
+    ];
+
+    for (i, label) in MENU_ITEMS.iter().enumerate() {
+        let item_y = MENU_PAD_Y + i as f32 * MENU_ITEM_HEIGHT;
+
+        // Hover highlight
+        if hover_item == Some(i) {
+            draw_rounded_rect(
+                &mut pixmap,
+                4.0,
+                item_y + 2.0,
+                width as f32 - 8.0,
+                MENU_ITEM_HEIGHT - 4.0,
+                4.0,
+                Color::from_rgba8(255, 255, 255, 20),
+            );
+        }
+
+        // Icon
+        let icon_y = item_y + (MENU_ITEM_HEIGHT - MENU_ICON_SIZE) / 2.0;
+        icon_fns[i](&mut pixmap, MENU_PAD_X, icon_y, MENU_ICON_SIZE);
+
+        // Label
+        let text_x = MENU_PAD_X + MENU_ICON_SIZE + MENU_ICON_TEXT_GAP;
+        let baseline = item_y + MENU_ITEM_HEIGHT / 2.0 + FONT_SIZE / 3.0;
+        draw_text(&mut pixmap, font, label, FONT_SIZE, text_x, baseline, TEXT_COLOR);
+    }
+
+    pixmap
+}
+
+// ---- Mars icon ----
+
+fn draw_mars_icon(pixmap: &mut Pixmap, x: f32, y: f32, size: f32) {
+    let mut pb = PathBuilder::new();
+    pb.move_to(0.3457, 121.024);
+    pb.line_to(43.9058, 3.36154);
+    pb.cubic_to(45.5652, -1.12063, 51.9047, -1.12061, 53.564, 3.36155);
+    pb.line_to(97.1242, 121.024);
+    pb.cubic_to(99.0128, 126.125, 92.7295, 130.29, 88.767, 126.563);
+    pb.line_to(52.263, 92.2277);
+    pb.cubic_to(50.2805, 90.3631, 47.1893, 90.3631, 45.2069, 92.2277);
+    pb.line_to(8.70285, 126.563);
+    pb.cubic_to(4.74029, 130.29, -1.54297, 126.125, 0.3457, 121.024);
+    pb.close();
+
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(Color::from_rgba8(247, 247, 247, 220));
+        paint.anti_alias = true;
+
+        // Path bounds: (~-1.5, ~-1.1) to (~99, ~130.3) → 100.5 × 131.4
+        let path_h = 131.4f32;
+        let path_w = 100.5f32;
+        let scale = size / path_h;
+        let scaled_w = path_w * scale;
+        let x_off = (size - scaled_w) / 2.0;
+
+        let transform = Transform::from_translate(1.54, 1.12)
+            .post_scale(scale, scale)
+            .post_translate(x + x_off, y);
+
+        pixmap.fill_path(&path, &paint, FillRule::Winding, transform, None);
+    }
+}
+
+// ---- Menu item icons ----
+
+fn draw_logout_icon(pixmap: &mut Pixmap, x: f32, y: f32, size: f32) {
+    let color = Color::from_rgba8(255, 255, 255, 200);
+    let mut paint = Paint::default();
+    paint.set_color(color);
+    paint.anti_alias = true;
+    let stroke = Stroke {
+        width: 1.4,
+        ..Default::default()
+    };
+
+    let cy = y + size / 2.0;
+
+    // Door frame (bracket shape)
+    let door_left = x + size * 0.1;
+    let door_top = y + size * 0.15;
+    let door_bottom = y + size * 0.85;
+    let door_w = size * 0.25;
+
+    let mut pb = PathBuilder::new();
+    pb.move_to(door_left + door_w, door_top);
+    pb.line_to(door_left, door_top);
+    pb.line_to(door_left, door_bottom);
+    pb.line_to(door_left + door_w, door_bottom);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+
+    // Arrow pointing right
+    let arrow_left = x + size * 0.35;
+    let arrow_right = x + size * 0.85;
+    let arrow_h = size * 0.18;
+
+    let mut pb = PathBuilder::new();
+    pb.move_to(arrow_left, cy);
+    pb.line_to(arrow_right, cy);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+    let mut pb = PathBuilder::new();
+    pb.move_to(arrow_right - arrow_h, cy - arrow_h);
+    pb.line_to(arrow_right, cy);
+    pb.line_to(arrow_right - arrow_h, cy + arrow_h);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+}
+
+fn draw_restart_icon(pixmap: &mut Pixmap, x: f32, y: f32, size: f32) {
+    let color = Color::from_rgba8(255, 255, 255, 200);
+    let mut paint = Paint::default();
+    paint.set_color(color);
+    paint.anti_alias = true;
+    let stroke = Stroke {
+        width: 1.4,
+        ..Default::default()
+    };
+
+    let cx = x + size / 2.0;
+    let cy = y + size / 2.0;
+    let r = size * 0.35;
+
+    // Circular arc with gap at top-right (40° to 320°, screen-clockwise)
+    let mut pb = PathBuilder::new();
+    let steps = 24;
+    for i in 0..=steps {
+        let frac = i as f32 / steps as f32;
+        let angle = (40.0 + frac * 280.0_f32).to_radians();
+        let px = cx + r * angle.sin();
+        let py = cy - r * angle.cos();
+        if i == 0 {
+            pb.move_to(px, py);
+        } else {
+            pb.line_to(px, py);
+        }
+    }
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+
+    // Arrowhead at start of arc (40° position, pointing clockwise)
+    let sa = 40.0f32.to_radians();
+    let tip_x = cx + r * sa.sin();
+    let tip_y = cy - r * sa.cos();
+    let a = size * 0.14;
+
+    let mut pb = PathBuilder::new();
+    pb.move_to(tip_x, tip_y);
+    pb.line_to(tip_x - a * 0.3, tip_y - a);
+    pb.line_to(tip_x + a, tip_y - a * 0.3);
+    pb.close();
+    if let Some(path) = pb.finish() {
+        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+}
+
+fn draw_power_icon(pixmap: &mut Pixmap, x: f32, y: f32, size: f32) {
+    let color = Color::from_rgba8(255, 255, 255, 200);
+    let mut paint = Paint::default();
+    paint.set_color(color);
+    paint.anti_alias = true;
+    let stroke = Stroke {
+        width: 1.4,
+        ..Default::default()
+    };
+
+    let cx = x + size / 2.0;
+    let cy = y + size / 2.0;
+    let r = size * 0.35;
+
+    // Arc with gap at top (50° to 310°, screen-clockwise)
+    let mut pb = PathBuilder::new();
+    let steps = 24;
+    for i in 0..=steps {
+        let frac = i as f32 / steps as f32;
+        let angle = (50.0 + frac * 260.0_f32).to_radians();
+        let px = cx + r * angle.sin();
+        let py = cy - r * angle.cos();
+        if i == 0 {
+            pb.move_to(px, py);
+        } else {
+            pb.line_to(px, py);
+        }
+    }
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+
+    // Vertical line from top of circle through gap
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx, cy - r * 1.15);
+    pb.line_to(cx, cy);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 }
 

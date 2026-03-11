@@ -46,6 +46,16 @@ struct Popup {
     drag_volume: Option<f32>,
 }
 
+struct MenuPopup {
+    surface: LayerSurface,
+    pool: SlotPool,
+    width: u32,
+    height: u32,
+    configured: bool,
+    needs_redraw: bool,
+    hover_item: Option<usize>,
+}
+
 pub struct Header {
     registry_state: RegistryState,
     seat_state: SeatState,
@@ -70,6 +80,7 @@ pub struct Header {
     zones: HitZones,
 
     popup: Option<Popup>,
+    menu_popup: Option<MenuPopup>,
     exit: bool,
 }
 
@@ -109,6 +120,7 @@ impl Header {
         let font = render::load_font();
         let state = SystemState::poll();
         let zones = HitZones {
+            mars_icon: (0.0, 0.0),
             volume: (0.0, 0.0),
             brightness: None,
         };
@@ -133,6 +145,7 @@ impl Header {
             state,
             zones,
             popup: None,
+            menu_popup: None,
             exit: false,
         };
 
@@ -213,6 +226,7 @@ impl Header {
 
             header.draw();
             header.draw_popup();
+            header.draw_menu();
 
             event_loop
                 .dispatch(Duration::from_millis(16), &mut header)
@@ -224,6 +238,7 @@ impl Header {
         if self.popup.is_some() {
             return;
         }
+        self.menu_popup.take(); // close menu if open
 
         let surface = self.compositor_state.create_surface(qh);
         let layer_surface = self.layer_shell.create_layer_surface(
@@ -278,6 +293,57 @@ impl Header {
         self.needs_redraw = true;
         if let Some(p) = self.popup.as_mut() {
             p.needs_redraw = true;
+        }
+    }
+
+    fn open_menu(&mut self, qh: &QueueHandle<Self>) {
+        if self.menu_popup.is_some() {
+            return;
+        }
+        self.popup.take(); // close volume popup if open
+
+        let surface = self.compositor_state.create_surface(qh);
+        let layer_surface = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Overlay,
+            Some("header-menu"),
+            None,
+        );
+
+        layer_surface.set_anchor(Anchor::TOP | Anchor::LEFT);
+        layer_surface.set_size(render::MENU_POPUP_WIDTH, render::MENU_POPUP_HEIGHT);
+        layer_surface.set_exclusive_zone(0);
+        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        layer_surface.set_margin(render::BAR_HEIGHT as i32 + 4, 0, 0, 4);
+        layer_surface.wl_surface().commit();
+
+        let pool = SlotPool::new(
+            render::MENU_POPUP_WIDTH as usize * render::MENU_POPUP_HEIGHT as usize * 4,
+            &self.shm,
+        )
+        .expect("Failed to create menu pool");
+
+        self.menu_popup = Some(MenuPopup {
+            surface: layer_surface,
+            pool,
+            width: render::MENU_POPUP_WIDTH,
+            height: render::MENU_POPUP_HEIGHT,
+            configured: false,
+            needs_redraw: true,
+            hover_item: None,
+        });
+    }
+
+    fn close_menu(&mut self) {
+        self.menu_popup.take();
+    }
+
+    fn toggle_menu(&mut self, qh: &QueueHandle<Self>) {
+        if self.menu_popup.is_some() {
+            self.close_menu();
+        } else {
+            self.open_menu(qh);
         }
     }
 
@@ -364,6 +430,37 @@ impl Header {
 
         popup.needs_redraw = false;
     }
+
+    fn draw_menu(&mut self) {
+        let (width, height, hover_item) = match &self.menu_popup {
+            Some(p) if p.configured && p.needs_redraw => (p.width, p.height, p.hover_item),
+            _ => return,
+        };
+
+        let pixmap = render::render_menu_popup(&self.font, width, height, hover_item);
+
+        let menu = self.menu_popup.as_mut().unwrap();
+        let stride = width as i32 * 4;
+        let buf_size = (stride * height as i32) as usize;
+
+        if menu.pool.len() < buf_size {
+            menu.pool.resize(buf_size).expect("resize menu pool");
+        }
+
+        let (buffer, canvas) = menu
+            .pool
+            .create_buffer(width as i32, height as i32, stride, wl_shm::Format::Argb8888)
+            .expect("create menu buffer");
+
+        rgba_to_argb(pixmap.data(), canvas, (width * height) as usize);
+
+        let surface = menu.surface.wl_surface();
+        surface.attach(Some(buffer.wl_buffer()), 0, 0);
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        surface.commit();
+
+        menu.needs_redraw = false;
+    }
 }
 
 fn rgba_to_argb(src: &[u8], dst: &mut [u8], pixel_count: usize) {
@@ -392,6 +489,10 @@ impl PointerHandler for Header {
                 .popup
                 .as_ref()
                 .map_or(false, |p| event.surface == *p.surface.wl_surface());
+            let on_menu = self
+                .menu_popup
+                .as_ref()
+                .map_or(false, |p| event.surface == *p.surface.wl_surface());
 
             if on_header {
                 match event.kind {
@@ -403,10 +504,15 @@ impl PointerHandler for Header {
                         ..
                     } => {
                         let x = self.pointer_x;
-                        if x >= self.zones.volume.0 && x <= self.zones.volume.1 {
+                        if x >= self.zones.mars_icon.0 && x <= self.zones.mars_icon.1 {
+                            self.popup.take();
+                            self.toggle_menu(qh);
+                        } else if x >= self.zones.volume.0 && x <= self.zones.volume.1 {
+                            self.menu_popup.take();
                             self.toggle_popup(qh);
-                        } else if self.popup.is_some() {
+                        } else {
                             self.close_popup();
+                            self.close_menu();
                         }
                     }
                     PointerEventKind::Axis {
@@ -505,6 +611,33 @@ impl PointerHandler for Header {
                     }
                     _ => {}
                 }
+            } else if on_menu {
+                match event.kind {
+                    PointerEventKind::Motion { .. } => {
+                        let item = render::menu_item_at(event.position.1 as f32);
+                        if let Some(mp) = self.menu_popup.as_mut() {
+                            if mp.hover_item != item {
+                                mp.hover_item = item;
+                                mp.needs_redraw = true;
+                            }
+                        }
+                    }
+                    PointerEventKind::Press {
+                        button: 0x110,
+                        ..
+                    } => {
+                        if let Some(item) = render::menu_item_at(event.position.1 as f32) {
+                            match item {
+                                0 => controls::logout(),
+                                1 => controls::restart(),
+                                2 => controls::shutdown(),
+                                _ => {}
+                            }
+                            self.close_menu();
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -573,7 +706,12 @@ impl OutputHandler for Header {
 
 impl LayerShellHandler for Header {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        // Check if the popup was closed
+        if let Some(menu) = &self.menu_popup {
+            if layer.wl_surface() == menu.surface.wl_surface() {
+                self.menu_popup = None;
+                return;
+            }
+        }
         if let Some(popup) = &self.popup {
             if layer.wl_surface() == popup.surface.wl_surface() {
                 self.popup = None;
@@ -591,7 +729,22 @@ impl LayerShellHandler for Header {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
-        // Check if this is the popup surface
+        // Check menu popup
+        if let Some(menu) = &mut self.menu_popup {
+            if layer.wl_surface() == menu.surface.wl_surface() {
+                if configure.new_size.0 > 0 {
+                    menu.width = configure.new_size.0;
+                }
+                if configure.new_size.1 > 0 {
+                    menu.height = configure.new_size.1;
+                }
+                menu.configured = true;
+                menu.needs_redraw = true;
+                return;
+            }
+        }
+
+        // Check volume popup
         if let Some(popup) = &mut self.popup {
             if layer.wl_surface() == popup.surface.wl_surface() {
                 if configure.new_size.0 > 0 {
@@ -690,10 +843,14 @@ impl KeyboardHandler for Header {
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        // Close popup when keyboard focus leaves it
         if let Some(popup) = &self.popup {
             if surface == popup.surface.wl_surface() {
                 self.close_popup();
+            }
+        }
+        if let Some(menu) = &self.menu_popup {
+            if surface == menu.surface.wl_surface() {
+                self.close_menu();
             }
         }
     }
@@ -706,9 +863,9 @@ impl KeyboardHandler for Header {
         _: u32,
         event: KeyEvent,
     ) {
-        // Close popup on Escape
         if event.keysym == Keysym::Escape {
             self.close_popup();
+            self.close_menu();
         }
     }
 
