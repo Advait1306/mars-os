@@ -8,18 +8,17 @@ pub struct SystemState {
 }
 
 impl SystemState {
-    pub fn poll() -> Self {
-        let (volume, muted) = poll_volume();
+    pub fn new() -> Self {
         Self {
-            volume,
-            muted,
-            brightness: poll_brightness(),
-            time_str: poll_time(),
+            volume: 0.0,
+            muted: false,
+            brightness: get_brightness(),
+            time_str: get_time(),
         }
     }
 }
 
-pub fn poll_volume() -> (f32, bool) {
+pub fn get_volume() -> (f32, bool) {
     let output = Command::new("wpctl")
         .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
         .output();
@@ -39,7 +38,7 @@ pub fn poll_volume() -> (f32, bool) {
     }
 }
 
-pub fn poll_brightness() -> Option<f32> {
+pub fn get_brightness() -> Option<f32> {
     let base = "/sys/class/backlight";
     if let Ok(entries) = std::fs::read_dir(base) {
         for entry in entries.flatten() {
@@ -70,7 +69,7 @@ pub fn poll_brightness() -> Option<f32> {
     }
 }
 
-pub fn poll_time() -> String {
+pub fn get_time() -> String {
     unsafe {
         let mut t: libc::time_t = 0;
         libc::time(&mut t);
@@ -124,16 +123,23 @@ pub fn adjust_brightness(delta: f32) {
 }
 
 pub fn logout() {
+    let args = [
+        "--session",
+        "--type=method_call",
+        "--dest=org.kde.Shutdown",
+        "/Shutdown",
+        "org.kde.Shutdown.logout",
+    ];
+    // Send twice — first call initiates KDE shutdown, second confirms
     let _ = Command::new("dbus-send")
         .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
-        .args([
-            "--session",
-            "--type=method_call",
-            "--dest=org.kde.Shutdown",
-            "/Shutdown",
-            "org.kde.Shutdown.logout",
-        ])
-        .spawn();
+        .args(&args)
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let _ = Command::new("dbus-send")
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+        .args(&args)
+        .output();
 }
 
 pub fn restart() {

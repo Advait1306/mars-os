@@ -118,7 +118,7 @@ impl Header {
             .expect("Failed to create SHM pool");
 
         let font = render::load_font();
-        let state = SystemState::poll();
+        let state = SystemState::new();
         let zones = HitZones {
             mars_icon: (0.0, 0.0),
             volume: (0.0, 0.0),
@@ -161,13 +161,13 @@ impl Header {
         let timer = Timer::from_duration(Duration::from_secs(1));
         loop_handle
             .insert_source(timer, |_, _, header: &mut Header| {
-                let new_time = controls::poll_time();
+                let new_time = controls::get_time();
                 if new_time != header.state.time_str {
                     header.state.time_str = new_time;
                     header.needs_redraw = true;
                 }
                 // Poll brightness less frequently (sysfs read, cheap but no event source)
-                header.state.brightness = controls::poll_brightness();
+                header.state.brightness = controls::get_brightness();
                 TimeoutAction::ToDuration(Duration::from_secs(1))
             })
             .expect("Failed to insert timer");
@@ -208,7 +208,7 @@ impl Header {
         loop_handle
             .insert_source(vol_rx, |event, _, header: &mut Header| {
                 if let channel::Event::Msg(()) = event {
-                    let (vol, muted) = controls::poll_volume();
+                    let (vol, muted) = controls::get_volume();
                     header.state.volume = vol;
                     header.state.muted = muted;
                     header.needs_redraw = true;
@@ -218,6 +218,11 @@ impl Header {
                 }
             })
             .expect("Failed to insert volume monitor");
+
+        // Initial volume read (subsequent updates are event-driven via pactl)
+        let (vol, muted) = controls::get_volume();
+        header.state.volume = vol;
+        header.state.muted = muted;
 
         loop {
             if header.exit {
@@ -289,7 +294,8 @@ impl Header {
     }
 
     fn refresh_state(&mut self) {
-        self.state = SystemState::poll();
+        self.state.brightness = controls::get_brightness();
+        self.state.time_str = controls::get_time();
         self.needs_redraw = true;
         if let Some(p) = self.popup.as_mut() {
             p.needs_redraw = true;
