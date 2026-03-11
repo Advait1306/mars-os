@@ -1,0 +1,11 @@
+#!/bin/bash
+# Listen for kglobalaccel shortcut signal and launch spotlight
+exec gdbus monitor --session --dest org.kde.kglobalaccel \
+  --object-path /component/spotlight_toggle_desktop 2>/dev/null | \
+while read -r line; do
+    case "$line" in
+        *globalShortcutPressed*)
+            /usr/local/bin/spotlight-toggle
+            ;;
+    esac
+done

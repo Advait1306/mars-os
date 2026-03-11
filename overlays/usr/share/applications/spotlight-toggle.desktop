@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Spotlight
+Exec=/usr/local/bin/spotlight-toggle
+NoDisplay=true
+X-KDE-GlobalAccel=Ctrl+Space

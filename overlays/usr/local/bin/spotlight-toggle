@@ -1,0 +1,6 @@
+#!/bin/sh
+if pkill -x spotlight; then
+    exit 0
+else
+    spotlight &
+fi

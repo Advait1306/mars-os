@@ -1,0 +1,37 @@
+#!/bin/bash
+# One-time setup: register spotlight shortcut with kglobalaccel
+# and rebind Meta key from app launcher to spotlight.
+# Safe to run multiple times.
+
+LOCK="$HOME/.config/spotlight-setup-done"
+if [ -f "$LOCK" ]; then
+    exit 0
+fi
+
+# Wait for kglobalaccel to be available
+for i in $(seq 1 30); do
+    if qdbus6 org.kde.kglobalaccel / > /dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+# Register spotlight shortcut component
+dbus-send --session --dest=org.kde.kglobalaccel --type=method_call \
+  /kglobalaccel org.kde.KGlobalAccel.doRegister \
+  array:string:"spotlight-toggle.desktop","_launch","Spotlight","Spotlight"
+
+# Bind Meta key to spotlight (Qt::Key_Meta_L = 0x01000022 = 16777250)
+dbus-send --session --dest=org.kde.kglobalaccel --type=method_call \
+  /kglobalaccel org.kde.KGlobalAccel.setForeignShortcut \
+  array:string:"spotlight-toggle.desktop","_launch","Spotlight","Spotlight" \
+  array:int32:16777250
+
+# Remove Meta from plasmashell app launcher, keep Alt+F1
+# Alt+F1 = Qt::AltModifier | Qt::Key_F1 = 0x09000030 = 150994992
+dbus-send --session --dest=org.kde.kglobalaccel --type=method_call \
+  /kglobalaccel org.kde.KGlobalAccel.setForeignShortcut \
+  array:string:"plasmashell","activate application launcher","plasmashell","Activate Application Launcher" \
+  array:int32:150994992
+
+touch "$LOCK"
