@@ -406,6 +406,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "header"
+version = "0.1.0"
+dependencies = [
+ "calloop 0.14.4",
+ "calloop-wayland-source 0.4.1",
+ "env_logger",
+ "fontdue",
+ "libc",
+ "log",
+ "smithay-client-toolkit",
+ "tiny-skia",
+ "wayland-client",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

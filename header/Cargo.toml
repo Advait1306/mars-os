@@ -1,0 +1,15 @@
+[package]
+name = "header"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+smithay-client-toolkit = { version = "0.19", features = ["calloop"] }
+wayland-client = "0.31"
+calloop = "0.14"
+calloop-wayland-source = "0.4"
+tiny-skia = "0.11"
+fontdue = "0.7"
+libc = "0.2"
+log = "0.4"
+env_logger = "0.11"

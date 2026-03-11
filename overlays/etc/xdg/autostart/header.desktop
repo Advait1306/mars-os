@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Header Bar
+Exec=/usr/local/bin/header
+X-KDE-autostart-phase=2
+X-KDE-Wayland-Interfaces=org_kde_plasma_window_management
