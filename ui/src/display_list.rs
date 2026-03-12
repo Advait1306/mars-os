@@ -1,8 +1,8 @@
 use crate::animator::Animator;
 use crate::color::Color;
-use crate::element::{Element, ElementKind, ImageSource};
+use crate::element::{Element, ElementKind, ImageSource, TextSpan};
 use crate::layout::{LayoutNode, Rect};
-use crate::style::Border;
+use crate::style::{Border, TextAlign, TextDecorationStyle};
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -23,6 +23,26 @@ pub enum DrawCommand {
         position: Point,
         font_size: f32,
         color: Color,
+        max_width: f32,
+        font_family: Option<Vec<String>>,
+        font_weight: Option<i32>,
+        font_italic: bool,
+        line_height: Option<f32>,
+        text_align: Option<TextAlign>,
+        max_lines: Option<usize>,
+        text_overflow_ellipsis: bool,
+        letter_spacing: f32,
+        word_spacing: f32,
+        underline: bool,
+        strikethrough: bool,
+        overline: bool,
+        text_decoration_style: Option<TextDecorationStyle>,
+        text_decoration_color: Option<Color>,
+        text_shadow: Vec<(Color, (f32, f32), f64)>,
+        // Text input state
+        cursor_byte_offset: Option<usize>,
+        selection_byte_range: Option<(usize, usize)>,
+        scroll_offset: f32,
     },
     Image {
         source: ImageSource,
@@ -54,6 +74,23 @@ pub enum DrawCommand {
         offset: Point,
     },
     PopTranslate,
+    RichText {
+        spans: Vec<TextSpan>,
+        position: Point,
+        max_width: f32,
+        font_size: f32,
+        color: Color,
+        font_family: Option<Vec<String>>,
+        font_weight: Option<i32>,
+        font_italic: bool,
+        line_height: Option<f32>,
+        text_align: Option<TextAlign>,
+        max_lines: Option<usize>,
+        text_overflow_ellipsis: bool,
+        letter_spacing: f32,
+        word_spacing: f32,
+        text_shadow: Vec<(Color, (f32, f32), f64)>,
+    },
 }
 
 /// Walk the LayoutNode tree and the corresponding Element tree to emit draw commands.
@@ -160,6 +197,49 @@ fn emit_commands(
             },
             font_size: element.font_size,
             color: element.color.unwrap_or(crate::color::WHITE),
+            max_width: bounds.width,
+            font_family: element.font_family.clone(),
+            font_weight: element.font_weight,
+            font_italic: element.font_italic,
+            line_height: element.line_height,
+            text_align: element.text_align,
+            max_lines: element.max_lines,
+            text_overflow_ellipsis: element.text_overflow_ellipsis,
+            letter_spacing: element.letter_spacing,
+            word_spacing: element.word_spacing,
+            underline: element.underline,
+            strikethrough: element.strikethrough,
+            overline: element.overline,
+            text_decoration_style: element.text_decoration_style,
+            text_decoration_color: element.text_decoration_color,
+            text_shadow: element.text_shadow.clone(),
+            cursor_byte_offset: None,
+            selection_byte_range: None,
+            scroll_offset: 0.0,
+        });
+    }
+
+    // Rich Text
+    if let ElementKind::RichText { ref spans } = element.kind {
+        commands.push(DrawCommand::RichText {
+            spans: spans.clone(),
+            position: Point {
+                x: bounds.x,
+                y: bounds.y,
+            },
+            max_width: bounds.width,
+            font_size: element.font_size,
+            color: element.color.unwrap_or(crate::color::WHITE),
+            font_family: element.font_family.clone(),
+            font_weight: element.font_weight,
+            font_italic: element.font_italic,
+            line_height: element.line_height,
+            text_align: element.text_align,
+            max_lines: element.max_lines,
+            text_overflow_ellipsis: element.text_overflow_ellipsis,
+            letter_spacing: element.letter_spacing,
+            word_spacing: element.word_spacing,
+            text_shadow: element.text_shadow.clone(),
         });
     }
 
@@ -175,7 +255,6 @@ fn emit_commands(
     if let ElementKind::TextInput { ref value, ref placeholder } = element.kind {
         let display_text = if value.is_empty() { placeholder } else { value };
         let text_color = if value.is_empty() {
-            // Placeholder text uses dimmed color
             let base = element.color.unwrap_or(crate::color::WHITE);
             Color {
                 r: base.r,
@@ -186,6 +265,36 @@ fn emit_commands(
         } else {
             element.color.unwrap_or(crate::color::WHITE)
         };
+
+        // Convert char-index cursor_offset to byte offset (only for actual value, not placeholder)
+        let cursor_byte_offset = element.cursor_offset.map(|char_idx| {
+            if value.is_empty() {
+                0
+            } else {
+                value.char_indices()
+                    .nth(char_idx)
+                    .map(|(byte_idx, _)| byte_idx)
+                    .unwrap_or(value.len())
+            }
+        });
+
+        // Convert char-index selection_range to byte offsets (only for actual value)
+        let selection_byte_range = if !value.is_empty() {
+            element.selection_range.map(|(start_char, end_char)| {
+                let start_byte = value.char_indices()
+                    .nth(start_char)
+                    .map(|(i, _)| i)
+                    .unwrap_or(value.len());
+                let end_byte = value.char_indices()
+                    .nth(end_char)
+                    .map(|(i, _)| i)
+                    .unwrap_or(value.len());
+                (start_byte, end_byte)
+            })
+        } else {
+            None
+        };
+
         commands.push(DrawCommand::Text {
             text: display_text.clone(),
             position: Point {
@@ -194,6 +303,25 @@ fn emit_commands(
             },
             font_size: element.font_size,
             color: text_color,
+            max_width: bounds.width,
+            font_family: element.font_family.clone(),
+            font_weight: element.font_weight,
+            font_italic: element.font_italic,
+            line_height: element.line_height,
+            text_align: element.text_align,
+            max_lines: Some(1),
+            text_overflow_ellipsis: false,
+            letter_spacing: element.letter_spacing,
+            word_spacing: element.word_spacing,
+            underline: element.underline,
+            strikethrough: element.strikethrough,
+            overline: false,
+            text_decoration_style: None,
+            text_decoration_color: None,
+            text_shadow: element.text_shadow.clone(),
+            cursor_byte_offset,
+            selection_byte_range,
+            scroll_offset: element.scroll_offset,
         });
     }
 

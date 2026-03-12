@@ -1,5 +1,6 @@
 use crate::element::{Element, ElementKind};
 use crate::style::{Alignment, Direction, Justify};
+use skia_safe::textlayout::FontCollection;
 use taffy::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -23,21 +24,31 @@ pub struct ElementRef {
     pub kind_debug: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct TextMeasure {
     content: String,
     font_size: f32,
+    font_collection: FontCollection,
+    font_family: Option<Vec<String>>,
+    font_weight: Option<i32>,
+    font_italic: bool,
+    line_height: Option<f32>,
+    letter_spacing: f32,
+    word_spacing: f32,
+    max_lines: Option<usize>,
+    text_overflow_ellipsis: bool,
 }
 
 pub fn compute_layout(
     root: &Element,
     available_width: f32,
     available_height: f32,
+    font_collection: &FontCollection,
 ) -> (LayoutNode, Vec<ElementRef>) {
     let mut tree: TaffyTree<TextMeasure> = TaffyTree::new();
     let mut elements: Vec<ElementRef> = Vec::new();
 
-    let root_id = build_taffy_node(&mut tree, root, &mut elements);
+    let root_id = build_taffy_node(&mut tree, root, &mut elements, font_collection);
 
     tree.compute_layout_with_measure(
         root_id,
@@ -45,14 +56,34 @@ pub fn compute_layout(
             width: AvailableSpace::Definite(available_width),
             height: AvailableSpace::Definite(available_height),
         },
-        |known_dimensions, _available_space, _node_id, node_context, _style| {
+        |known_dimensions, available_space, _node_id, node_context, _style| {
             if let Some(ctx) = node_context {
-                let char_width = ctx.font_size * 0.6;
-                let line_height = ctx.font_size * 1.2;
-                let width = known_dimensions
-                    .width
-                    .unwrap_or(ctx.content.len() as f32 * char_width);
-                let height = known_dimensions.height.unwrap_or(line_height);
+                let available_width = known_dimensions.width.unwrap_or_else(|| {
+                    match available_space.width {
+                        AvailableSpace::Definite(w) => w,
+                        AvailableSpace::MinContent => 0.0,
+                        AvailableSpace::MaxContent => f32::MAX,
+                    }
+                });
+
+                let mut fc = ctx.font_collection.clone();
+                let (measured_w, measured_h) = crate::renderer::measure_text_paragraph(
+                    &ctx.content,
+                    ctx.font_size,
+                    &mut fc,
+                    ctx.font_family.as_deref(),
+                    ctx.font_weight,
+                    ctx.font_italic,
+                    ctx.line_height,
+                    ctx.letter_spacing,
+                    ctx.word_spacing,
+                    available_width,
+                    ctx.max_lines,
+                    ctx.text_overflow_ellipsis,
+                );
+
+                let width = known_dimensions.width.unwrap_or(measured_w);
+                let height = known_dimensions.height.unwrap_or(measured_h);
                 Size { width, height }
             } else {
                 Size::ZERO
@@ -70,6 +101,7 @@ fn build_taffy_node(
     tree: &mut TaffyTree<TextMeasure>,
     element: &Element,
     elements: &mut Vec<ElementRef>,
+    font_collection: &FontCollection,
 ) -> NodeId {
     elements.push(ElementRef {
         kind_debug: format!("{:?}", std::mem::discriminant(&element.kind)),
@@ -79,34 +111,41 @@ fn build_taffy_node(
     let child_ids: Vec<NodeId> = element
         .children
         .iter()
-        .map(|child| build_taffy_node(tree, child, elements))
+        .map(|child| build_taffy_node(tree, child, elements, font_collection))
         .collect();
 
     let style = element_to_taffy_style(element);
 
+    let make_ctx = |content: String, el: &Element| -> TextMeasure {
+        TextMeasure {
+            content,
+            font_size: el.font_size,
+            font_collection: font_collection.clone(),
+            font_family: el.font_family.clone(),
+            font_weight: el.font_weight,
+            font_italic: el.font_italic,
+            line_height: el.line_height,
+            letter_spacing: el.letter_spacing,
+            word_spacing: el.word_spacing,
+            max_lines: el.max_lines,
+            text_overflow_ellipsis: el.text_overflow_ellipsis,
+        }
+    };
+
     match &element.kind {
         ElementKind::Text { content } => {
-            // Text nodes are leaves with a measure context
-            tree.new_leaf_with_context(
-                style,
-                TextMeasure {
-                    content: content.clone(),
-                    font_size: element.font_size,
-                },
-            )
-            .unwrap()
+            tree.new_leaf_with_context(style, make_ctx(content.clone(), element))
+                .unwrap()
+        }
+        ElementKind::RichText { spans } => {
+            let full_text: String = spans.iter().map(|s| s.content.as_str()).collect();
+            tree.new_leaf_with_context(style, make_ctx(full_text, element))
+                .unwrap()
         }
         ElementKind::TextInput { value, placeholder } => {
-            // Text input nodes measure based on value or placeholder
             let display_text = if value.is_empty() { placeholder.clone() } else { value.clone() };
-            tree.new_leaf_with_context(
-                style,
-                TextMeasure {
-                    content: display_text,
-                    font_size: element.font_size,
-                },
-            )
-            .unwrap()
+            tree.new_leaf_with_context(style, make_ctx(display_text, element))
+                .unwrap()
         }
         _ => {
             tree.new_with_children(style, &child_ids).unwrap()
@@ -236,11 +275,18 @@ mod tests {
     use super::*;
     use crate::element::*;
     use crate::style::*;
+    use skia_safe::FontMgr;
+
+    fn test_fc() -> FontCollection {
+        let mut fc = FontCollection::new();
+        fc.set_default_font_manager(FontMgr::default(), None);
+        fc
+    }
 
     #[test]
     fn test_simple_container() {
         let tree = container().width(100.0).height(50.0);
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         assert_eq!(layout.bounds.width, 100.0);
         assert_eq!(layout.bounds.height, 50.0);
     }
@@ -250,7 +296,7 @@ mod tests {
         let tree = row()
             .child(container().width(50.0).height(30.0))
             .child(container().width(70.0).height(30.0));
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         // Row should be wide enough for both children
         assert_eq!(layout.children.len(), 2);
         assert_eq!(layout.children[0].bounds.width, 50.0);
@@ -266,7 +312,7 @@ mod tests {
             .height(100.0)
             .padding(10.0)
             .child(container().fill_width().fill_height());
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let child = &layout.children[0];
         assert_eq!(child.bounds.x, 10.0);
         assert_eq!(child.bounds.y, 10.0);
@@ -280,7 +326,7 @@ mod tests {
             .gap(10.0)
             .child(container().width(50.0).height(30.0))
             .child(container().width(50.0).height(30.0));
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         assert_eq!(layout.children[1].bounds.x, 60.0); // 50 + 10 gap
     }
 
@@ -291,7 +337,7 @@ mod tests {
             .child(container().width(50.0).height(30.0))
             .child(spacer())
             .child(container().width(50.0).height(30.0));
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         // Last child should be at the end
         assert!((layout.children[2].bounds.x - 150.0).abs() < 1.0);
     }
@@ -299,7 +345,7 @@ mod tests {
     #[test]
     fn test_text_element() {
         let tree = text("Hello").font_size(16.0);
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         assert!(layout.bounds.width > 0.0);
         assert!(layout.bounds.height > 0.0);
     }
@@ -315,7 +361,7 @@ mod tests {
                     .child(container().width(40.0).height(40.0)),
             )
             .child(container().width(100.0).height(20.0));
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         assert_eq!(layout.children.len(), 2);
         // First child is a row with 2 children
         assert_eq!(layout.children[0].children.len(), 2);
@@ -328,7 +374,7 @@ mod tests {
             .height(100.0)
             .align_items(Alignment::Center)
             .child(container().width(50.0).height(30.0));
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let child = &layout.children[0];
         // Should be centered: (200 - 50) / 2 = 75
         assert!((child.bounds.x - 75.0).abs() < 1.0);

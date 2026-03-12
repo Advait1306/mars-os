@@ -108,6 +108,14 @@ mod tests {
     use crate::element::*;
     use crate::input::CursorStyle;
     use crate::layout::compute_layout;
+    use skia_safe::textlayout::FontCollection;
+    use skia_safe::FontMgr;
+
+    fn test_fc() -> FontCollection {
+        let mut fc = FontCollection::new();
+        fc.set_default_font_manager(FontMgr::default(), None);
+        fc
+    }
 
     #[test]
     fn test_hit_interactive_element() {
@@ -120,7 +128,7 @@ mod tests {
                     .height(50.0)
                     .on_click(|| {}),
             );
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let result = hit_test(&layout, &tree, 25.0, 25.0);
         assert!(result.is_some());
         let path = result.unwrap().path;
@@ -134,7 +142,7 @@ mod tests {
             .width(100.0)
             .height(100.0)
             .on_click(|| {});
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let result = hit_test(&layout, &tree, 200.0, 200.0);
         assert!(result.is_none());
     }
@@ -142,7 +150,7 @@ mod tests {
     #[test]
     fn test_non_interactive_not_hit() {
         let tree = container().width(100.0).height(100.0);
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let result = hit_test(&layout, &tree, 50.0, 50.0);
         assert!(result.is_none());
     }
@@ -153,7 +161,7 @@ mod tests {
             .width(100.0)
             .height(100.0)
             .cursor(CursorStyle::Pointer);
-        let (layout, _) = compute_layout(&tree, 800.0, 600.0);
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let result = hit_test(&layout, &tree, 50.0, 50.0);
         assert!(result.is_some());
     }

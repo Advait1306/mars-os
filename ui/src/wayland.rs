@@ -165,7 +165,7 @@ impl WaylandState {
                 wl_shm::Format::Argb8888,
             )
             .expect("Failed to create buffer");
-        let (layout_tree, _elements) = compute_layout(&element_tree, width as f32, height as f32);
+        let (layout_tree, _elements) = compute_layout(&element_tree, width as f32, height as f32, &self.renderer.font_collection());
 
         // Diff keyed elements for enter/exit/layout animations
         let (keyed_infos, keyed_bounds) =

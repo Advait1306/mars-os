@@ -21,6 +21,23 @@ pub enum Justify {
     SpaceBetween,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextDecorationStyle {
+    Solid,
+    Double,
+    Dotted,
+    Dashed,
+    Wavy,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Border {
     pub color: Color,

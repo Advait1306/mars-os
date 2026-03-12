@@ -1,15 +1,32 @@
 use crate::animation::{Animation, From, To};
 use crate::color::Color;
 use crate::input::CursorStyle;
-use crate::style::{Alignment, Border, Direction, Justify};
+use crate::style::{Alignment, Border, Direction, Justify, TextAlign, TextDecorationStyle};
 
 pub enum ElementKind {
     Container,
     Text { content: String },
+    RichText { spans: Vec<TextSpan> },
     Image { source: ImageSource },
     Spacer,
     Divider { thickness: f32 },
     TextInput { value: String, placeholder: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct TextSpan {
+    pub content: String,
+    pub color: Option<Color>,
+    pub font_size: Option<f32>,
+    pub font_weight: Option<i32>,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+    pub font_family: Option<Vec<String>>,
+    pub letter_spacing: Option<f32>,
+    pub background: Option<Color>,
+    pub text_decoration_color: Option<Color>,
+    pub text_decoration_style: Option<TextDecorationStyle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,6 +69,26 @@ pub struct Element {
     // Text-specific
     pub font_size: f32,
     pub color: Option<Color>,
+    pub font_family: Option<Vec<String>>,
+    pub font_weight: Option<i32>,
+    pub font_italic: bool,
+    pub line_height: Option<f32>,
+    pub letter_spacing: f32,
+    pub text_align: Option<TextAlign>,
+    pub max_lines: Option<usize>,
+    pub text_overflow_ellipsis: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+    pub overline: bool,
+    pub text_decoration_style: Option<TextDecorationStyle>,
+    pub text_decoration_color: Option<Color>,
+    pub word_spacing: f32,
+    pub text_shadow: Vec<(Color, (f32, f32), f64)>,
+
+    // Text input cursor state (set by the view when the input is focused)
+    pub cursor_offset: Option<usize>,
+    pub selection_range: Option<(usize, usize)>,
+    pub scroll_offset: f32,
 
     // Animation
     pub animate: Option<Animation>,
@@ -96,6 +133,24 @@ impl Default for Element {
             clip: false,
             font_size: 14.0,
             color: None,
+            font_family: None,
+            font_weight: None,
+            font_italic: false,
+            line_height: None,
+            letter_spacing: 0.0,
+            text_align: None,
+            max_lines: None,
+            text_overflow_ellipsis: false,
+            underline: false,
+            strikethrough: false,
+            overline: false,
+            text_decoration_style: None,
+            text_decoration_color: None,
+            word_spacing: 0.0,
+            text_shadow: Vec::new(),
+            cursor_offset: None,
+            selection_range: None,
+            scroll_offset: 0.0,
             animate: None,
             animate_layout: false,
             layout_animation: None,
@@ -215,6 +270,13 @@ pub fn scroll_xy() -> Element {
     }
 }
 
+pub fn rich_text() -> Element {
+    Element {
+        kind: ElementKind::RichText { spans: Vec::new() },
+        ..Default::default()
+    }
+}
+
 pub fn text_input(value: &str) -> Element {
     Element {
         kind: ElementKind::TextInput {
@@ -322,6 +384,81 @@ impl Element {
         self.color = Some(c);
         self
     }
+    pub fn font_family(mut self, family: &str) -> Self {
+        self.font_family = Some(vec![family.to_string()]);
+        self
+    }
+    pub fn font_families(mut self, families: &[&str]) -> Self {
+        self.font_family = Some(families.iter().map(|s| s.to_string()).collect());
+        self
+    }
+    pub fn font_weight(mut self, weight: i32) -> Self {
+        self.font_weight = Some(weight);
+        self
+    }
+    pub fn bold(mut self) -> Self {
+        self.font_weight = Some(700);
+        self
+    }
+    pub fn italic(mut self) -> Self {
+        self.font_italic = true;
+        self
+    }
+    pub fn line_height(mut self, lh: f32) -> Self {
+        self.line_height = Some(lh);
+        self
+    }
+    pub fn letter_spacing(mut self, spacing: f32) -> Self {
+        self.letter_spacing = spacing;
+        self
+    }
+    pub fn text_align(mut self, align: TextAlign) -> Self {
+        self.text_align = Some(align);
+        self
+    }
+    pub fn max_lines(mut self, n: usize) -> Self {
+        self.max_lines = Some(n);
+        self
+    }
+    pub fn ellipsis(mut self) -> Self {
+        self.text_overflow_ellipsis = true;
+        self
+    }
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+    pub fn strikethrough(mut self) -> Self {
+        self.strikethrough = true;
+        self
+    }
+    pub fn overline(mut self) -> Self {
+        self.overline = true;
+        self
+    }
+    pub fn text_decoration_style(mut self, style: TextDecorationStyle) -> Self {
+        self.text_decoration_style = Some(style);
+        self
+    }
+    pub fn text_decoration_color(mut self, color: Color) -> Self {
+        self.text_decoration_color = Some(color);
+        self
+    }
+    pub fn word_spacing(mut self, spacing: f32) -> Self {
+        self.word_spacing = spacing;
+        self
+    }
+    pub fn text_shadow(mut self, color: Color, offset: (f32, f32), blur: f64) -> Self {
+        self.text_shadow.push((color, offset, blur));
+        self
+    }
+    pub fn span(mut self, content: &str, style_fn: impl FnOnce(SpanBuilder) -> SpanBuilder) -> Self {
+        if let ElementKind::RichText { ref mut spans } = self.kind {
+            let builder = style_fn(SpanBuilder::new(content));
+            spans.push(builder.build());
+        }
+        self
+    }
 
     // Event handlers
     pub fn on_click(mut self, f: impl Fn() + 'static) -> Self {
@@ -382,6 +519,82 @@ impl Element {
     }
     pub fn exit(mut self, to: To) -> Self {
         self.exit = Some(to);
+        self
+    }
+}
+
+pub struct SpanBuilder {
+    span: TextSpan,
+}
+
+impl SpanBuilder {
+    fn new(content: &str) -> Self {
+        Self {
+            span: TextSpan {
+                content: content.to_string(),
+                color: None,
+                font_size: None,
+                font_weight: None,
+                italic: false,
+                underline: false,
+                strikethrough: false,
+                font_family: None,
+                letter_spacing: None,
+                background: None,
+                text_decoration_color: None,
+                text_decoration_style: None,
+            },
+        }
+    }
+    fn build(self) -> TextSpan {
+        self.span
+    }
+    pub fn color(mut self, c: Color) -> Self {
+        self.span.color = Some(c);
+        self
+    }
+    pub fn font_size(mut self, s: f32) -> Self {
+        self.span.font_size = Some(s);
+        self
+    }
+    pub fn font_weight(mut self, w: i32) -> Self {
+        self.span.font_weight = Some(w);
+        self
+    }
+    pub fn bold(mut self) -> Self {
+        self.span.font_weight = Some(700);
+        self
+    }
+    pub fn italic(mut self) -> Self {
+        self.span.italic = true;
+        self
+    }
+    pub fn underline(mut self) -> Self {
+        self.span.underline = true;
+        self
+    }
+    pub fn strikethrough(mut self) -> Self {
+        self.span.strikethrough = true;
+        self
+    }
+    pub fn font_family(mut self, family: &str) -> Self {
+        self.span.font_family = Some(vec![family.to_string()]);
+        self
+    }
+    pub fn letter_spacing(mut self, spacing: f32) -> Self {
+        self.span.letter_spacing = Some(spacing);
+        self
+    }
+    pub fn background(mut self, c: Color) -> Self {
+        self.span.background = Some(c);
+        self
+    }
+    pub fn text_decoration_color(mut self, c: Color) -> Self {
+        self.span.text_decoration_color = Some(c);
+        self
+    }
+    pub fn text_decoration_style(mut self, style: TextDecorationStyle) -> Self {
+        self.span.text_decoration_style = Some(style);
         self
     }
 }
