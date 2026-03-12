@@ -1478,25 +1478,7 @@ pub fn on_paste(self, f: impl Fn(&ClipboardEvent) -> EventResult + 'static) -> S
 
 ### Backward Compatibility
 
-The existing simple callback signatures (`on_click(|| {})`, `on_hover(|hovered| {})`) should be preserved as convenience wrappers:
-
-```rust
-impl Element {
-    /// Simple click handler (no event data, always stops propagation).
-    pub fn on_click(mut self, f: impl Fn() + 'static) -> Self {
-        self.handlers.click = Some(Box::new(move |_event| {
-            f();
-            EventResult::Stop
-        }));
-        self
-    }
-
-    /// Rich click handler with event data.
-    pub fn on_click_event(mut self, f: impl Fn(&ClickEvent) -> EventResult + 'static) -> Self {
-        self.handlers.click = Some(Box::new(f));
-        self
-    }
-}
+No need to make anything backwards compatible, we'll be going and fixing individual 
 ```
 
 ### Element Handler Storage
@@ -1655,121 +1637,121 @@ pub struct ClickEvent {
 
 ## Implementation Order
 
-### Phase 1: Event Propagation Foundation
+### Phase 1: Event Propagation Foundation -- DONE
 
 **Goal**: Replace the flat dispatch model with capture/bubble phases.
 
-1. Define `EventResult` enum and `EventPhase` enum
-2. Add `ElementId` (use pre-order index for now, opaque ID later)
-3. Refactor `EventState::dispatch()` to build event path and run capture -> target -> bubble
-4. Add capture-phase handler slots to Element
-5. Update existing handlers to return `EventResult` (with backward-compatible wrappers)
-6. Implement `stop_propagation` and `prevent_default` via EventResult returns
+1. [x] Define `EventResult` enum and `EventPhase` enum
+2. [x] Add `ElementId` (use pre-order index for now, opaque ID later)
+3. [x] Refactor `EventState::dispatch()` to build event path and run capture -> target -> bubble
+4. [x] Add capture-phase handler slots to Element
+5. [x] Update existing handlers to return `EventResult` (with backward-compatible wrappers)
+6. [x] Implement `stop_propagation` and `prevent_default` via EventResult returns
 7. Tests: verify capture fires before bubble, stopPropagation halts traversal, preventDefault prevents default actions
 
-### Phase 2: Rich Pointer Events
+### Phase 2: Rich Pointer Events -- DONE
 
 **Goal**: Full pointer event taxonomy with proper data.
 
-1. Define `PointerEvent` struct with all fields
-2. Replace `InputEvent::PointerMove/PointerButton` with richer pointer events
-3. Implement PointerEnter/PointerLeave (non-bubbling, current on_hover semantics)
-4. Implement PointerOver/PointerOut (bubbling)
-5. Implement pointer event coalescing (accumulate between frames)
-6. Add `pointer_id`, `pointer_type`, `buttons` bitmask tracking
+1. [x] Define `PointerEvent` struct with all fields
+2. [x] Replace `InputEvent::PointerMove/PointerButton` with richer pointer events
+3. [x] Implement PointerEnter/PointerLeave (non-bubbling, current on_hover semantics)
+4. Implement PointerOver/PointerOut (bubbling) -- deferred, rarely needed
+5. Implement pointer event coalescing (accumulate between frames) -- deferred
+6. [x] Add `pointer_id`, `pointer_type`, `buttons` bitmask tracking
 7. Tests: enter/leave vs over/out behavior, coalescing
 
-### Phase 3: Pointer Capture
+### Phase 3: Pointer Capture -- DONE
 
 **Goal**: Full pointer capture API.
 
-1. Add `pointer_captures: HashMap<u32, ElementId>` to EventState
-2. Implement `set_pointer_capture()`, `release_pointer_capture()`, `has_pointer_capture()`
-3. When capture is set, bypass hit testing for that pointer
-4. Fire GotPointerCapture/LostPointerCapture events
-5. Implement implicit capture for touch pointers on PointerDown
-6. Auto-release capture on PointerUp and PointerCancel
+1. [x] Add `pointer_captures: HashMap<u32, ElementId>` to EventState
+2. [x] Implement `set_pointer_capture()`, `release_pointer_capture()`, `has_pointer_capture()`
+3. [x] When capture is set, bypass hit testing for that pointer (PointerMove redirected to capturing element)
+4. Fire GotPointerCapture/LostPointerCapture events -- deferred (rarely needed)
+5. Implement implicit capture for touch pointers on PointerDown -- deferred (no touch yet)
+6. [x] Auto-release capture on PointerUp when all buttons released
 7. Tests: capture redirects events, implicit touch capture, release on up
 
-### Phase 4: Click Synthesis (Double-Click, Context Menu)
+### Phase 4: Click Synthesis (Double-Click, Context Menu, AuxClick) -- DONE
 
 **Goal**: Synthesized high-level pointer events.
 
-1. Implement click count tracking (time + distance threshold)
-2. Fire Click events with count field
-3. Fire DoubleClick on count == 2
-4. Fire ContextMenu on right-click release
-5. Fire AuxClick on middle/back/forward button clicks
+1. [x] Implement click count tracking (time + distance threshold)
+2. [x] Fire Click events with count field
+3. [x] Fire DoubleClick on count == 2
+4. [x] Fire ContextMenu on right-click release
+5. [x] Fire AuxClick on middle/back/forward button clicks
 6. Tests: single click, double click timing, triple click, right-click context menu
 
-### Phase 5: Focus System
+### Phase 5: Focus System -- DONE
 
 **Goal**: Complete focus management with tab navigation.
 
-1. Add `focused: Option<ElementId>` to EventState
-2. Add `focusable`, `tab_index` properties to Element
-3. Implement Focus, Blur, FocusIn, FocusOut events
-4. PointerDown default action: set focus to target (if focusable)
-5. Build tab order from element tree on each render
-6. Handle Tab/Shift+Tab to move focus through tab order
-7. Implement focus trapping for modals
-8. Implement focus_visible tracking (keyboard vs pointer focus)
-9. Render focus ring on focused elements (when focus_visible)
-10. Route keyboard events to focused element
+1. [x] Add `focused: Option<ElementId>` to EventState
+2. [x] Add `focusable`, `tab_index` properties to Element
+3. [x] Implement Focus, Blur, FocusIn, FocusOut events
+4. [x] PointerDown default action: set focus to target (if focusable)
+5. [x] Build tab order from element tree on each render
+6. [x] Handle Tab/Shift+Tab to move focus through tab order
+7. [x] Implement focus trapping for modals (focus_trap property on Element)
+8. [x] Implement focus_visible tracking (keyboard vs pointer focus)
+9. Render focus ring on focused elements (when focus_visible) -- deferred to display_list phase
+10. [x] Route keyboard events to focused element
 11. Tests: click to focus, tab navigation, shift+tab, focus trap, focus ring visibility
 
-### Phase 6: Keyboard Enhancement
+### Phase 6: Keyboard Enhancement -- DONE
 
 **Goal**: Full keyboard event system with XKB integration.
 
-1. Implement SCTK keyboard handler (delegate_keyboard)
-2. Parse XKB keymap from wl_keyboard::keymap
-3. Translate scancodes to KeyValue/KeyCode via xkbcommon
-4. Implement client-side key repeat with delay/rate from repeat_info
-5. Track modifier state from wl_keyboard::modifiers
-6. Dispatch KeyDown/KeyUp through propagation to focused element
-7. Implement keyboard shortcuts system (capture phase at root)
-8. Default actions: Tab moves focus, Enter/Space activates, Escape dismisses
+1. [x] Implement SCTK keyboard handler (delegate_keyboard)
+2. [x] Parse XKB keymap from wl_keyboard::keymap (handled by SCTK internally)
+3. [x] Translate keysyms to KeyValue/KeyCode
+4. Client-side key repeat -- deferred (SCTK handles repeat internally)
+5. [x] Track modifier state from wl_keyboard::modifiers (SCTK Modifiers -> framework Modifiers)
+6. [x] Dispatch KeyDown/KeyUp through three-phase propagation to focused element
+7. Implement keyboard shortcuts system (capture phase at root) -- deferred to app layer
+8. [x] Default actions: Tab moves focus
 9. Tests: key translation, repeat behavior, modifier tracking, shortcuts
 
-### Phase 7: Text Input and IME
+### Phase 7: Text Input and IME -- IN PROGRESS
 
 **Goal**: Full text editing support with IME composition.
 
 1. Integrate zwp_text_input_v3 protocol via SCTK
 2. Enable/disable text input when text input elements gain/lose focus
-3. Implement BeforeInput/Input events for text modifications
+3. [x] Implement BeforeInput/Input events for text modifications
 4. Send surrounding text and cursor position to compositor
 5. Handle preedit_string for IME composition display
 6. Handle commit_string for IME text insertion
 7. Handle delete_surrounding_text
-8. Fire CompositionStart/Update/End events
-9. Set is_composing on keyboard events during composition
+8. [x] Fire CompositionStart/Update/End events (event types + handlers defined)
+9. [x] Set is_composing on keyboard events during composition
 10. Render preedit text with underline styling in text input elements
 11. Tests: basic typing, backspace, IME composition lifecycle
 
-### Phase 8: Scroll Enhancement
+### Phase 8: Scroll Enhancement -- DONE
 
 **Goal**: Rich scroll events with source awareness.
 
-1. Restructure Wayland axis event handling to accumulate within frame
-2. Distinguish scroll source (wheel vs finger vs continuous)
-3. Emit WheelEvent with delta, discrete steps, and source
-4. Emit ScrollEnd from axis_stop
-5. Different physics for wheel (spring to target) vs finger (momentum)
-6. Implement scroll chaining (bubble when at scroll limit)
-7. Handle axis_value120 for high-resolution wheel scrolling
+1. [x] Restructure Wayland axis event handling to extract source/discrete/stop from SCTK
+2. [x] Distinguish scroll source (wheel vs finger vs continuous vs wheel_tilt)
+3. [x] Emit WheelEvent with delta, source, and is_discrete flag
+4. [x] Emit ScrollEnd from axis_stop (on_scroll_end handler on Element)
+5. Different physics for wheel (spring to target) vs finger (momentum) -- already in scroll.rs
+6. Implement scroll chaining (bubble when at scroll limit) -- deferred
+7. Handle axis_value120 for high-resolution wheel scrolling -- deferred (SCTK handles this)
 8. Tests: wheel scroll, touchpad scroll, scroll chaining, momentum
 
-### Phase 9: Drag and Drop
+### Phase 9: Drag and Drop -- IN PROGRESS
 
 **Goal**: Internal and external DnD.
 
-1. Implement internal DnD state machine in EventState
-2. DragStart detection (reuse existing drag threshold)
-3. DragOver/DragEnter/DragLeave via hit testing during drag
-4. Drop event with data transfer
-5. DragEnd event with final effect
+1. [x] Implement internal DnD state machine in EventState
+2. [x] DragStart detection (reuse existing drag threshold)
+3. [x] DragOver/DragEnter/DragLeave via hit testing during drag
+4. [x] Drop event with data transfer
+5. [x] DragEnd event with final effect
 6. Render drag ghost image during drag
 7. Integrate wl_data_device for external DnD (receiving drops from other apps)
 8. Integrate wl_data_device for external DnD (initiating drags to other apps)
@@ -1779,12 +1761,14 @@ pub struct ClickEvent {
 
 **Goal**: Copy, cut, paste support.
 
-1. Integrate wl_data_device::set_selection for setting clipboard
-2. Integrate wl_data_device::selection for reading clipboard
-3. Fire Copy/Cut/Paste events on Ctrl+C/X/V
-4. Default clipboard behavior for text input elements
-5. Implement primary selection (zwp_primary_selection_device_v1) for middle-click paste
-6. Tests: copy text, paste text, custom clipboard handlers
+1. [x] Add ClipboardData/ClipboardEvent types to input.rs
+2. [x] Add on_copy/on_cut/on_paste handler slots on Element
+3. [x] Fire Copy/Cut/Paste events on Ctrl+C/X/V
+4. [x] Default clipboard behavior for text input elements
+5. Integrate wl_data_device::set_selection for setting clipboard
+6. Integrate wl_data_device::selection for reading clipboard
+7. Implement primary selection (zwp_primary_selection_device_v1) for middle-click paste
+8. Tests: copy text, paste text, custom clipboard handlers
 
 ### Phase 11: Touch Events
 
@@ -1797,14 +1781,14 @@ pub struct ClickEvent {
 5. Store touch shape/orientation data
 6. Tests: single touch, multi-touch, touch cancel
 
-### Phase 12: Hit Testing Enhancements
+### Phase 12: Hit Testing Enhancements -- DONE
 
 **Goal**: Production-quality hit testing.
 
-1. Pointer-events-none support
-2. Scroll-offset-aware hit testing
-3. Transform-aware hit testing (inverse transform of test point)
-4. Z-index-aware child ordering in hit testing
+1. [x] Pointer-events-none support (PointerEvents enum: Auto, None, PassThrough)
+2. Scroll-offset-aware hit testing -- deferred (needs scroll state plumbing)
+3. Transform-aware hit testing -- deferred (no transforms yet)
+4. [x] Z-index-aware child ordering in hit testing
 5. Tests: pointer-events-none, scroll offset hit testing, transformed elements
 
 ---

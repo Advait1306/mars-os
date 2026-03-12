@@ -25,7 +25,12 @@ pub use app::{SurfaceConfig, View, WaylandContext};
 pub use reactive::{Reactive, RenderContext};
 pub use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 pub use handle::Handle;
-pub use input::CursorStyle;
+pub use input::{
+    BeforeInputEvent, ClickEvent, ClipboardData, ClipboardEvent, CompositionEvent, CursorStyle,
+    DragData, DragEvent, DropEffect, EventPhase, EventResult, FocusEvent, InputType, KeyCode,
+    KeyValue, KeyboardEvent, Modifiers, MouseButton, PointerEvent, PointerEvents, PointerType,
+    ScrollEndEvent, ScrollSource, TextInputEvent, WheelEvent,
+};
 pub use animation::{Animation, Easing, From, To};
 
 /// Run a view as a Wayland application.

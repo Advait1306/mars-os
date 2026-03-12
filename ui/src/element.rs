@@ -1,6 +1,10 @@
 use crate::animation::{Animation, From, To};
 use crate::color::Color;
-use crate::input::CursorStyle;
+use crate::input::{
+    BeforeInputEvent, ClickEvent, ClipboardEvent, CompositionEvent, CursorStyle, DragEvent,
+    EventResult, FocusEvent, KeyboardEvent, PointerEvent, PointerEvents, ScrollEndEvent,
+    TextInputEvent, TouchEvent, WheelEvent,
+};
 use crate::style::{
     AlignContent, Alignment, Border, Dim, Direction, DisplayMode, FlexWrap, GridAutoFlow,
     GridPlacement, Justify, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
@@ -142,14 +146,79 @@ pub struct Element {
     // Scroll
     pub scroll_direction: Option<ScrollDirection>,
 
-    // Event handlers
-    pub on_click: Option<Box<dyn Fn()>>,
+    // Event handlers -- bubble phase
+    pub on_pointer_down: Option<Box<dyn Fn(&PointerEvent) -> EventResult>>,
+    pub on_pointer_up: Option<Box<dyn Fn(&PointerEvent) -> EventResult>>,
+    pub on_pointer_move: Option<Box<dyn Fn(&PointerEvent) -> EventResult>>,
+    pub on_pointer_enter: Option<Box<dyn Fn(&PointerEvent)>>,
+    pub on_pointer_leave: Option<Box<dyn Fn(&PointerEvent)>>,
+
+    // Event handlers -- capture phase
+    pub on_pointer_down_capture: Option<Box<dyn Fn(&PointerEvent) -> EventResult>>,
+    pub on_pointer_up_capture: Option<Box<dyn Fn(&PointerEvent) -> EventResult>>,
+    pub on_pointer_move_capture: Option<Box<dyn Fn(&PointerEvent) -> EventResult>>,
+
+    // Synthesized pointer events
+    pub on_click: Option<Box<dyn Fn(&ClickEvent) -> EventResult>>,
+    pub on_double_click: Option<Box<dyn Fn(&ClickEvent) -> EventResult>>,
+    pub on_context_menu: Option<Box<dyn Fn(&PointerEvent) -> EventResult>>,
+
+    // Keyboard events
+    pub on_key_down: Option<Box<dyn Fn(&KeyboardEvent) -> EventResult>>,
+    pub on_key_up: Option<Box<dyn Fn(&KeyboardEvent) -> EventResult>>,
+
+    // Focus events
+    pub on_focus: Option<Box<dyn Fn(&FocusEvent)>>,
+    pub on_blur: Option<Box<dyn Fn(&FocusEvent)>>,
+    pub on_focus_in: Option<Box<dyn Fn(&FocusEvent) -> EventResult>>,
+    pub on_focus_out: Option<Box<dyn Fn(&FocusEvent) -> EventResult>>,
+
+    // Scroll events
+    pub on_wheel: Option<Box<dyn Fn(&WheelEvent) -> EventResult>>,
+    pub on_scroll_end: Option<Box<dyn Fn(&ScrollEndEvent)>>,
+
+    // Text input events
+    pub on_before_input: Option<Box<dyn Fn(&BeforeInputEvent) -> EventResult>>,
+    pub on_input: Option<Box<dyn Fn(&TextInputEvent)>>,
+
+    // Composition (IME) events
+    pub on_composition_start: Option<Box<dyn Fn(&CompositionEvent) -> EventResult>>,
+    pub on_composition_update: Option<Box<dyn Fn(&CompositionEvent)>>,
+    pub on_composition_end: Option<Box<dyn Fn(&CompositionEvent)>>,
+
+    // Clipboard events
+    pub on_copy: Option<Box<dyn Fn(&mut ClipboardEvent) -> EventResult>>,
+    pub on_cut: Option<Box<dyn Fn(&mut ClipboardEvent) -> EventResult>>,
+    pub on_paste: Option<Box<dyn Fn(&ClipboardEvent) -> EventResult>>,
+
+    // Drag and drop events
+    pub on_drag_start: Option<Box<dyn Fn(&mut DragEvent) -> EventResult>>,
+    pub on_drag_over: Option<Box<dyn Fn(&mut DragEvent) -> EventResult>>,
+    pub on_drop: Option<Box<dyn Fn(&DragEvent) -> EventResult>>,
+    pub on_drag_enter: Option<Box<dyn Fn(&DragEvent)>>,
+    pub on_drag_leave: Option<Box<dyn Fn(&DragEvent)>>,
+
+    // Touch events (native multi-touch, in addition to touch-to-pointer coercion)
+    pub on_touch_start: Option<Box<dyn Fn(&TouchEvent) -> EventResult>>,
+    pub on_touch_move: Option<Box<dyn Fn(&TouchEvent) -> EventResult>>,
+    pub on_touch_end: Option<Box<dyn Fn(&TouchEvent) -> EventResult>>,
+    pub on_touch_cancel: Option<Box<dyn Fn(&TouchEvent)>>,
+
+    // Legacy handlers (kept for compatibility during migration)
     pub on_hover: Option<Box<dyn Fn(bool)>>,
     pub on_drag: Option<Box<dyn Fn(f32, f32)>>,
     pub on_scroll: Option<Box<dyn Fn(f32, f32)>>,
     pub on_change: Option<Box<dyn Fn(String)>>,
     pub on_submit: Option<Box<dyn Fn()>>,
     pub cursor: Option<CursorStyle>,
+
+    // Focus properties
+    pub focusable: Option<bool>,
+    pub tab_index: Option<i32>,
+    pub focus_trap: bool,
+
+    // Hit testing
+    pub pointer_events: PointerEvents,
 }
 
 impl Default for Element {
@@ -234,13 +303,61 @@ impl Default for Element {
             initial: None,
             exit: None,
             scroll_direction: None,
+            // Event handlers -- bubble
+            on_pointer_down: None,
+            on_pointer_up: None,
+            on_pointer_move: None,
+            on_pointer_enter: None,
+            on_pointer_leave: None,
+            // Event handlers -- capture
+            on_pointer_down_capture: None,
+            on_pointer_up_capture: None,
+            on_pointer_move_capture: None,
+            // Synthesized
             on_click: None,
+            on_double_click: None,
+            on_context_menu: None,
+            // Keyboard
+            on_key_down: None,
+            on_key_up: None,
+            // Focus
+            on_focus: None,
+            on_blur: None,
+            on_focus_in: None,
+            on_focus_out: None,
+            // Scroll
+            on_wheel: None,
+            on_scroll_end: None,
+            // Text input
+            on_before_input: None,
+            on_input: None,
+            // Composition
+            on_composition_start: None,
+            on_composition_update: None,
+            on_composition_end: None,
+            // Clipboard
+            on_copy: None,
+            on_cut: None,
+            on_paste: None,
+            // Drag and drop
+            on_drag_start: None,
+            on_drag_over: None,
+            on_drop: None,
+            on_drag_enter: None,
+            on_drag_leave: None,
+            // Legacy
             on_hover: None,
             on_drag: None,
             on_scroll: None,
             on_change: None,
             on_submit: None,
             cursor: None,
+            // Focus properties
+            focusable: None,
+            tab_index: None,
+            focus_trap: false,
+            // Hit testing
+            pointer_events: PointerEvents::Auto,
         }
     }
 }
@@ -779,12 +896,166 @@ impl Element {
         self
     }
 
-    // === Event handlers ===
+    // === Event handlers -- pointer (bubble phase) ===
 
-    pub fn on_click(mut self, f: impl Fn() + 'static) -> Self {
+    pub fn on_pointer_down(mut self, f: impl Fn(&PointerEvent) -> EventResult + 'static) -> Self {
+        self.on_pointer_down = Some(Box::new(f));
+        self
+    }
+    pub fn on_pointer_up(mut self, f: impl Fn(&PointerEvent) -> EventResult + 'static) -> Self {
+        self.on_pointer_up = Some(Box::new(f));
+        self
+    }
+    pub fn on_pointer_move(mut self, f: impl Fn(&PointerEvent) -> EventResult + 'static) -> Self {
+        self.on_pointer_move = Some(Box::new(f));
+        self
+    }
+    pub fn on_pointer_enter(mut self, f: impl Fn(&PointerEvent) + 'static) -> Self {
+        self.on_pointer_enter = Some(Box::new(f));
+        self
+    }
+    pub fn on_pointer_leave(mut self, f: impl Fn(&PointerEvent) + 'static) -> Self {
+        self.on_pointer_leave = Some(Box::new(f));
+        self
+    }
+
+    // === Event handlers -- pointer (capture phase) ===
+
+    pub fn on_pointer_down_capture(mut self, f: impl Fn(&PointerEvent) -> EventResult + 'static) -> Self {
+        self.on_pointer_down_capture = Some(Box::new(f));
+        self
+    }
+    pub fn on_pointer_up_capture(mut self, f: impl Fn(&PointerEvent) -> EventResult + 'static) -> Self {
+        self.on_pointer_up_capture = Some(Box::new(f));
+        self
+    }
+    pub fn on_pointer_move_capture(mut self, f: impl Fn(&PointerEvent) -> EventResult + 'static) -> Self {
+        self.on_pointer_move_capture = Some(Box::new(f));
+        self
+    }
+
+    // === Synthesized pointer events ===
+
+    pub fn on_click(mut self, f: impl Fn(&ClickEvent) -> EventResult + 'static) -> Self {
         self.on_click = Some(Box::new(f));
         self
     }
+    pub fn on_double_click(mut self, f: impl Fn(&ClickEvent) -> EventResult + 'static) -> Self {
+        self.on_double_click = Some(Box::new(f));
+        self
+    }
+    pub fn on_context_menu(mut self, f: impl Fn(&PointerEvent) -> EventResult + 'static) -> Self {
+        self.on_context_menu = Some(Box::new(f));
+        self
+    }
+
+    // === Keyboard events ===
+
+    pub fn on_key_down(mut self, f: impl Fn(&KeyboardEvent) -> EventResult + 'static) -> Self {
+        self.on_key_down = Some(Box::new(f));
+        self
+    }
+    pub fn on_key_up(mut self, f: impl Fn(&KeyboardEvent) -> EventResult + 'static) -> Self {
+        self.on_key_up = Some(Box::new(f));
+        self
+    }
+
+    // === Focus events ===
+
+    pub fn on_focus(mut self, f: impl Fn(&FocusEvent) + 'static) -> Self {
+        self.on_focus = Some(Box::new(f));
+        self
+    }
+    pub fn on_blur(mut self, f: impl Fn(&FocusEvent) + 'static) -> Self {
+        self.on_blur = Some(Box::new(f));
+        self
+    }
+    pub fn on_focus_in(mut self, f: impl Fn(&FocusEvent) -> EventResult + 'static) -> Self {
+        self.on_focus_in = Some(Box::new(f));
+        self
+    }
+    pub fn on_focus_out(mut self, f: impl Fn(&FocusEvent) -> EventResult + 'static) -> Self {
+        self.on_focus_out = Some(Box::new(f));
+        self
+    }
+
+    // === Scroll events ===
+
+    pub fn on_wheel(mut self, f: impl Fn(&WheelEvent) -> EventResult + 'static) -> Self {
+        self.on_wheel = Some(Box::new(f));
+        self
+    }
+    pub fn on_scroll_end(mut self, f: impl Fn(&ScrollEndEvent) + 'static) -> Self {
+        self.on_scroll_end = Some(Box::new(f));
+        self
+    }
+
+    // === Text input events ===
+
+    pub fn on_before_input(mut self, f: impl Fn(&BeforeInputEvent) -> EventResult + 'static) -> Self {
+        self.on_before_input = Some(Box::new(f));
+        self
+    }
+    pub fn on_input(mut self, f: impl Fn(&TextInputEvent) + 'static) -> Self {
+        self.on_input = Some(Box::new(f));
+        self
+    }
+
+    // === Composition (IME) events ===
+
+    pub fn on_composition_start(mut self, f: impl Fn(&CompositionEvent) -> EventResult + 'static) -> Self {
+        self.on_composition_start = Some(Box::new(f));
+        self
+    }
+    pub fn on_composition_update(mut self, f: impl Fn(&CompositionEvent) + 'static) -> Self {
+        self.on_composition_update = Some(Box::new(f));
+        self
+    }
+    pub fn on_composition_end(mut self, f: impl Fn(&CompositionEvent) + 'static) -> Self {
+        self.on_composition_end = Some(Box::new(f));
+        self
+    }
+
+    // === Drag and drop events ===
+
+    pub fn on_drag_start(mut self, f: impl Fn(&mut DragEvent) -> EventResult + 'static) -> Self {
+        self.on_drag_start = Some(Box::new(f));
+        self
+    }
+    pub fn on_drag_over(mut self, f: impl Fn(&mut DragEvent) -> EventResult + 'static) -> Self {
+        self.on_drag_over = Some(Box::new(f));
+        self
+    }
+    pub fn on_drop(mut self, f: impl Fn(&DragEvent) -> EventResult + 'static) -> Self {
+        self.on_drop = Some(Box::new(f));
+        self
+    }
+    pub fn on_drag_enter(mut self, f: impl Fn(&DragEvent) + 'static) -> Self {
+        self.on_drag_enter = Some(Box::new(f));
+        self
+    }
+    pub fn on_drag_leave(mut self, f: impl Fn(&DragEvent) + 'static) -> Self {
+        self.on_drag_leave = Some(Box::new(f));
+        self
+    }
+
+    // === Clipboard events ===
+
+    pub fn on_copy(mut self, f: impl Fn(&mut ClipboardEvent) -> EventResult + 'static) -> Self {
+        self.on_copy = Some(Box::new(f));
+        self
+    }
+    pub fn on_cut(mut self, f: impl Fn(&mut ClipboardEvent) -> EventResult + 'static) -> Self {
+        self.on_cut = Some(Box::new(f));
+        self
+    }
+    pub fn on_paste(mut self, f: impl Fn(&ClipboardEvent) -> EventResult + 'static) -> Self {
+        self.on_paste = Some(Box::new(f));
+        self
+    }
+
+    // === Legacy event handlers (kept for migration) ===
+
     pub fn on_hover(mut self, f: impl Fn(bool) + 'static) -> Self {
         self.on_hover = Some(Box::new(f));
         self
@@ -816,6 +1087,45 @@ impl Element {
     }
     pub fn cursor(mut self, style: CursorStyle) -> Self {
         self.cursor = Some(style);
+        self
+    }
+
+    // === Focus properties ===
+
+    /// Make this element focusable.
+    /// tab_index controls tab order:
+    ///   None = not tabbable (but still focusable by click/programmatic)
+    ///   Some(0) = tabbable in document order
+    ///   Some(n > 0) = tabbable with explicit order (lower numbers first)
+    pub fn focusable(mut self, tab_index: Option<i32>) -> Self {
+        self.focusable = Some(true);
+        self.tab_index = tab_index;
+        self
+    }
+
+    /// Make this element not focusable.
+    pub fn not_focusable(mut self) -> Self {
+        self.focusable = Some(false);
+        self.tab_index = None;
+        self
+    }
+
+    /// Trap focus within this element's subtree.
+    /// Tab/Shift+Tab will cycle only among focusable descendants.
+    pub fn focus_trap(mut self) -> Self {
+        self.focus_trap = true;
+        self
+    }
+
+    /// This element and its children are invisible to pointer events.
+    pub fn pointer_events_none(mut self) -> Self {
+        self.pointer_events = PointerEvents::None;
+        self
+    }
+
+    /// Skip this element in hit testing but still test children.
+    pub fn pointer_events_pass_through(mut self) -> Self {
+        self.pointer_events = PointerEvents::PassThrough;
         self
     }
 
