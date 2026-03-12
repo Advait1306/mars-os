@@ -21,7 +21,13 @@ Phase 1 (core visual upgrades) is DONE:
 - Inset box shadows (`DrawCommand::InsetBoxShadow` with Chromium-style EvenOdd path clipping)
 - Multiple box shadows (`Vec<BoxShadow>` on Element, both outset and inset)
 
-The next phase to work on is **Phase 2** (border styles, per-side borders, outline).
+Phase 2 (borders and outlines) is DONE:
+- BorderStyle enum (Solid, Dashed, Dotted, Double, None)
+- Per-side borders via FullBorder (BorderSide per side with clip-based drrect rendering)
+- Outline support (offset stroke outside element, does not affect layout)
+- Border style rendering: dashed via PathEffect::dash, dotted via round caps, double via two strokes
+
+The next phase to work on is **Phase 3** (CSS filters).
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

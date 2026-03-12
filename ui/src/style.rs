@@ -224,8 +224,43 @@ pub struct BoxShadow {
     pub inset: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BorderStyle {
+    None,
+    Solid,
+    Dashed,
+    Dotted,
+    Double,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Border {
     pub color: Color,
     pub width: f32,
+}
+
+/// Per-side border definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BorderSide {
+    pub width: f32,
+    pub color: Color,
+    pub style: BorderStyle,
+}
+
+/// Full per-side border specification.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FullBorder {
+    pub top: Option<BorderSide>,
+    pub right: Option<BorderSide>,
+    pub bottom: Option<BorderSide>,
+    pub left: Option<BorderSide>,
+}
+
+/// Outline (does not affect layout, drawn outside the element).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outline {
+    pub color: Color,
+    pub width: f32,
+    pub style: BorderStyle,
+    pub offset: f32,
 }

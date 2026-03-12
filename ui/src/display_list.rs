@@ -2,7 +2,10 @@ use crate::animator::Animator;
 use crate::color::Color;
 use crate::element::{Element, ElementKind, ImageSource, TextSpan};
 use crate::layout::{LayoutNode, Rect};
-use crate::style::{Border, CornerRadii, DisplayMode, Gradient, TextAlign, TextDecorationStyle};
+use crate::style::{
+    Border, BorderStyle, CornerRadii, DisplayMode, FullBorder, Gradient, Outline, TextAlign,
+    TextDecorationStyle,
+};
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -17,6 +20,17 @@ pub enum DrawCommand {
         background: Color,
         corner_radii: CornerRadii,
         border: Option<Border>,
+        border_style: BorderStyle,
+    },
+    PerSideBorder {
+        bounds: Rect,
+        corner_radii: CornerRadii,
+        full_border: FullBorder,
+    },
+    Outline {
+        bounds: Rect,
+        corner_radii: CornerRadii,
+        outline: Outline,
     },
     Text {
         text: String,
@@ -211,6 +225,7 @@ fn emit_commands(
             background: bg,
             corner_radii: element.corner_radii,
             border: element.border.clone(),
+            border_style: element.border_style,
         });
     } else if element.border.is_some() {
         commands.push(DrawCommand::Rect {
@@ -218,6 +233,16 @@ fn emit_commands(
             background: crate::color::TRANSPARENT,
             corner_radii: element.corner_radii,
             border: element.border.clone(),
+            border_style: element.border_style,
+        });
+    }
+
+    // Per-side borders
+    if let Some(ref full_border) = element.full_border {
+        commands.push(DrawCommand::PerSideBorder {
+            bounds: bounds.clone(),
+            corner_radii: element.corner_radii,
+            full_border: full_border.clone(),
         });
     }
 
@@ -385,6 +410,15 @@ fn emit_commands(
 
     // Recurse into children, sorted by z-index
     emit_children_sorted(node, element, animator, commands);
+
+    // Outline (drawn on top of children, outside the element box)
+    if let Some(ref outline) = element.outline {
+        commands.push(DrawCommand::Outline {
+            bounds: bounds.clone(),
+            corner_radii: element.corner_radii,
+            outline: outline.clone(),
+        });
+    }
 
     // Pop in reverse order of push
     if pop_layer {

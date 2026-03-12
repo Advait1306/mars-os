@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use skia_safe::{
-    Canvas, Paint, RRect, FontMgr, FontStyle,
+    Canvas, Paint, RRect, FontMgr, FontStyle, PathEffect,
     PaintStyle, MaskFilter, BlurStyle, ClipOp, TileMode,
     image_filters, canvas::SaveLayerRec, gradient_shader,
 };
@@ -29,8 +29,14 @@ impl SkiaRenderer {
     pub fn execute(&mut self, canvas: &Canvas, commands: &[DrawCommand]) {
         for cmd in commands {
             match cmd {
-                DrawCommand::Rect { bounds, background, corner_radii, border } => {
-                    self.draw_rect(canvas, bounds, background, corner_radii, border.as_ref());
+                DrawCommand::Rect { bounds, background, corner_radii, border, border_style } => {
+                    self.draw_rect(canvas, bounds, background, corner_radii, border.as_ref(), *border_style);
+                }
+                DrawCommand::PerSideBorder { bounds, corner_radii, full_border } => {
+                    self.draw_per_side_border(canvas, bounds, corner_radii, full_border);
+                }
+                DrawCommand::Outline { bounds, corner_radii, outline } => {
+                    self.draw_outline(canvas, bounds, corner_radii, outline);
                 }
                 DrawCommand::Text { text, position, font_size, color, max_width, font_family,
                     font_weight, font_italic, line_height, text_align, max_lines, text_overflow_ellipsis,
@@ -95,7 +101,7 @@ impl SkiaRenderer {
         }
     }
 
-    fn draw_rect(&self, canvas: &Canvas, bounds: &Rect, bg: &Color, radii: &crate::style::CornerRadii, border: Option<&crate::style::Border>) {
+    fn draw_rect(&self, canvas: &Canvas, bounds: &Rect, bg: &Color, radii: &crate::style::CornerRadii, border: Option<&crate::style::Border>, border_style: crate::style::BorderStyle) {
         let rrect = to_rrect(bounds, radii);
 
         // Fill
@@ -108,13 +114,151 @@ impl SkiaRenderer {
 
         // Stroke
         if let Some(b) = border {
+            if border_style == crate::style::BorderStyle::None {
+                return;
+            }
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
             paint.set_style(PaintStyle::Stroke);
             paint.set_stroke_width(b.width);
             paint.set_color(to_skia_color(&b.color));
-            canvas.draw_rrect(rrect, &paint);
+            apply_border_style_to_paint(&mut paint, border_style, b.width);
+
+            if border_style == crate::style::BorderStyle::Double && b.width >= 3.0 {
+                // Double: two strokes at 1/3 width with 1/3 gap
+                let third = b.width / 3.0;
+                paint.set_stroke_width(third);
+                paint.set_path_effect(None);
+                // Outer stroke
+                let outer = inset_rrect(bounds, radii, -third / 2.0);
+                canvas.draw_rrect(outer, &paint);
+                // Inner stroke
+                let inner = inset_rrect(bounds, radii, b.width - third / 2.0);
+                canvas.draw_rrect(inner, &paint);
+            } else {
+                canvas.draw_rrect(rrect, &paint);
+            }
         }
+    }
+
+    fn draw_per_side_border(
+        &self,
+        canvas: &Canvas,
+        bounds: &Rect,
+        radii: &crate::style::CornerRadii,
+        full_border: &crate::style::FullBorder,
+    ) {
+        // Draw each side individually using clip regions + draw_drrect approach
+        let sides = [
+            (&full_border.top, Side::Top),
+            (&full_border.right, Side::Right),
+            (&full_border.bottom, Side::Bottom),
+            (&full_border.left, Side::Left),
+        ];
+
+        for (side_opt, side) in &sides {
+            if let Some(border_side) = side_opt {
+                if border_side.width <= 0.0 || border_side.style == crate::style::BorderStyle::None {
+                    continue;
+                }
+
+                canvas.save();
+
+                // Clip to the side's quadrant (diagonal split at corners)
+                let cx = bounds.x + bounds.width / 2.0;
+                let cy = bounds.y + bounds.height / 2.0;
+                let (x0, y0) = (bounds.x, bounds.y);
+                let (x1, y1) = (bounds.x + bounds.width, bounds.y + bounds.height);
+
+                let mut clip_path = skia_safe::Path::new();
+                match side {
+                    Side::Top => {
+                        clip_path.move_to((x0, y0));
+                        clip_path.line_to((x1, y0));
+                        clip_path.line_to((cx, cy));
+                        clip_path.close();
+                    }
+                    Side::Right => {
+                        clip_path.move_to((x1, y0));
+                        clip_path.line_to((x1, y1));
+                        clip_path.line_to((cx, cy));
+                        clip_path.close();
+                    }
+                    Side::Bottom => {
+                        clip_path.move_to((x1, y1));
+                        clip_path.line_to((x0, y1));
+                        clip_path.line_to((cx, cy));
+                        clip_path.close();
+                    }
+                    Side::Left => {
+                        clip_path.move_to((x0, y1));
+                        clip_path.line_to((x0, y0));
+                        clip_path.line_to((cx, cy));
+                        clip_path.close();
+                    }
+                }
+                canvas.clip_path(&clip_path, ClipOp::Intersect, true);
+
+                // Draw the border ring for this side
+                let outer_rrect = to_rrect(bounds, radii);
+                let inner_bounds = Rect {
+                    x: bounds.x + full_border.left.as_ref().map_or(0.0, |s| s.width),
+                    y: bounds.y + full_border.top.as_ref().map_or(0.0, |s| s.width),
+                    width: bounds.width
+                        - full_border.left.as_ref().map_or(0.0, |s| s.width)
+                        - full_border.right.as_ref().map_or(0.0, |s| s.width),
+                    height: bounds.height
+                        - full_border.top.as_ref().map_or(0.0, |s| s.width)
+                        - full_border.bottom.as_ref().map_or(0.0, |s| s.width),
+                };
+                let inner_radii = crate::style::CornerRadii {
+                    top_left: (radii.top_left - border_side.width).max(0.0),
+                    top_right: (radii.top_right - border_side.width).max(0.0),
+                    bottom_right: (radii.bottom_right - border_side.width).max(0.0),
+                    bottom_left: (radii.bottom_left - border_side.width).max(0.0),
+                };
+                let inner_rrect = to_rrect(&inner_bounds, &inner_radii);
+
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(to_skia_color(&border_side.color));
+                canvas.draw_drrect(outer_rrect, inner_rrect, &paint);
+
+                canvas.restore();
+            }
+        }
+    }
+
+    fn draw_outline(
+        &self,
+        canvas: &Canvas,
+        bounds: &Rect,
+        radii: &crate::style::CornerRadii,
+        outline: &crate::style::Outline,
+    ) {
+        let half_w = outline.width / 2.0;
+        let expand = outline.offset + half_w;
+        let outline_bounds = Rect {
+            x: bounds.x - expand,
+            y: bounds.y - expand,
+            width: bounds.width + expand * 2.0,
+            height: bounds.height + expand * 2.0,
+        };
+        let outline_radii = crate::style::CornerRadii {
+            top_left: (radii.top_left + outline.offset).max(0.0),
+            top_right: (radii.top_right + outline.offset).max(0.0),
+            bottom_right: (radii.bottom_right + outline.offset).max(0.0),
+            bottom_left: (radii.bottom_left + outline.offset).max(0.0),
+        };
+        let rrect = to_rrect(&outline_bounds, &outline_radii);
+
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_style(PaintStyle::Stroke);
+        paint.set_stroke_width(outline.width);
+        paint.set_color(to_skia_color(&outline.color));
+        apply_border_style_to_paint(&mut paint, outline.style, outline.width);
+        canvas.draw_rrect(rrect, &paint);
     }
 
     fn draw_gradient_rect(
@@ -694,6 +838,48 @@ pub fn measure_text_paragraph(
     let mut paragraph = builder.build();
     paragraph.layout(max_width);
     (paragraph.longest_line().ceil(), paragraph.height())
+}
+
+enum Side {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+fn apply_border_style_to_paint(paint: &mut Paint, style: crate::style::BorderStyle, width: f32) {
+    match style {
+        crate::style::BorderStyle::Dashed => {
+            let dash_len = (3.0 * width).max(3.0);
+            if let Some(effect) = PathEffect::dash(&[dash_len, dash_len], 0.0) {
+                paint.set_path_effect(effect);
+            }
+        }
+        crate::style::BorderStyle::Dotted => {
+            let gap = (2.0 * width).max(2.0);
+            paint.set_stroke_cap(skia_safe::PaintCap::Round);
+            if let Some(effect) = PathEffect::dash(&[0.01, gap], 0.0) {
+                paint.set_path_effect(effect);
+            }
+        }
+        _ => {} // Solid, Double, None handled elsewhere
+    }
+}
+
+fn inset_rrect(bounds: &Rect, radii: &crate::style::CornerRadii, inset: f32) -> RRect {
+    let inset_bounds = Rect {
+        x: bounds.x + inset,
+        y: bounds.y + inset,
+        width: (bounds.width - inset * 2.0).max(0.0),
+        height: (bounds.height - inset * 2.0).max(0.0),
+    };
+    let inset_radii = crate::style::CornerRadii {
+        top_left: (radii.top_left - inset).max(0.0),
+        top_right: (radii.top_right - inset).max(0.0),
+        bottom_right: (radii.bottom_right - inset).max(0.0),
+        bottom_left: (radii.bottom_left - inset).max(0.0),
+    };
+    to_rrect(&inset_bounds, &inset_radii)
 }
 
 fn to_skia_color(c: &Color) -> skia_safe::Color {

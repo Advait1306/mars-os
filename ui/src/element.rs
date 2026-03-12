@@ -6,9 +6,9 @@ use crate::input::{
     TextInputEvent, TouchEvent, WheelEvent,
 };
 use crate::style::{
-    AlignContent, Alignment, Border, BoxShadow, CornerRadii, Dim, Direction, DisplayMode, FlexWrap,
-    Gradient, GridAutoFlow, GridPlacement, Justify, Overflow, PositionType, TextAlign,
-    TextDecorationStyle, TrackSize,
+    AlignContent, Alignment, Border, BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim,
+    Direction, DisplayMode, FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement, Justify,
+    Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
 };
 
 pub enum ElementKind {
@@ -111,6 +111,9 @@ pub struct Element {
     pub gradient: Option<Gradient>,
     pub corner_radii: CornerRadii,
     pub border: Option<Border>,
+    pub border_style: BorderStyle,
+    pub full_border: Option<FullBorder>,
+    pub outline: Option<Outline>,
     pub box_shadows: Vec<BoxShadow>,
     pub opacity: f32,
     pub clip: bool,
@@ -279,6 +282,9 @@ impl Default for Element {
             gradient: None,
             corner_radii: CornerRadii::ZERO,
             border: None,
+            border_style: BorderStyle::Solid,
+            full_border: None,
+            outline: None,
             box_shadows: Vec::new(),
             opacity: 1.0,
             clip: false,
@@ -804,6 +810,40 @@ impl Element {
     }
     pub fn border(mut self, color: Color, width: f32) -> Self {
         self.border = Some(Border { color, width });
+        self
+    }
+    pub fn border_style(mut self, style: BorderStyle) -> Self {
+        self.border_style = style;
+        self
+    }
+    pub fn border_top(mut self, color: Color, width: f32) -> Self {
+        let side = BorderSide { width, color, style: BorderStyle::Solid };
+        self.full_border.get_or_insert(FullBorder { top: None, right: None, bottom: None, left: None }).top = Some(side);
+        self
+    }
+    pub fn border_right(mut self, color: Color, width: f32) -> Self {
+        let side = BorderSide { width, color, style: BorderStyle::Solid };
+        self.full_border.get_or_insert(FullBorder { top: None, right: None, bottom: None, left: None }).right = Some(side);
+        self
+    }
+    pub fn border_bottom(mut self, color: Color, width: f32) -> Self {
+        let side = BorderSide { width, color, style: BorderStyle::Solid };
+        self.full_border.get_or_insert(FullBorder { top: None, right: None, bottom: None, left: None }).bottom = Some(side);
+        self
+    }
+    pub fn border_left(mut self, color: Color, width: f32) -> Self {
+        let side = BorderSide { width, color, style: BorderStyle::Solid };
+        self.full_border.get_or_insert(FullBorder { top: None, right: None, bottom: None, left: None }).left = Some(side);
+        self
+    }
+    pub fn outline(mut self, color: Color, width: f32) -> Self {
+        self.outline = Some(Outline { color, width, style: BorderStyle::Solid, offset: 0.0 });
+        self
+    }
+    pub fn outline_offset(mut self, offset: f32) -> Self {
+        if let Some(ref mut o) = self.outline {
+            o.offset = offset;
+        }
         self
     }
     pub fn box_shadow(mut self, color: Color, offset_x: f32, offset_y: f32, blur: f32, spread: f32) -> Self {
