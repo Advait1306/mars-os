@@ -1,4 +1,5 @@
 use crate::color::Color;
+use crate::input::CursorStyle;
 use crate::style::{Alignment, Border, Direction, Justify};
 
 pub enum ElementKind {
@@ -42,6 +43,13 @@ pub struct Element {
     // Text-specific
     pub font_size: f32,
     pub color: Option<Color>,
+
+    // Event handlers
+    pub on_click: Option<Box<dyn Fn()>>,
+    pub on_hover: Option<Box<dyn Fn(bool)>>,
+    pub on_drag: Option<Box<dyn Fn(f32, f32)>>,
+    pub on_scroll: Option<Box<dyn Fn(f32, f32)>>,
+    pub cursor: Option<CursorStyle>,
 }
 
 impl Default for Element {
@@ -67,6 +75,11 @@ impl Default for Element {
             clip: false,
             font_size: 14.0,
             color: None,
+            on_click: None,
+            on_hover: None,
+            on_drag: None,
+            on_scroll: None,
+            cursor: None,
         }
     }
 }
@@ -240,6 +253,28 @@ impl Element {
     }
     pub fn color(mut self, c: Color) -> Self {
         self.color = Some(c);
+        self
+    }
+
+    // Event handlers
+    pub fn on_click(mut self, f: impl Fn() + 'static) -> Self {
+        self.on_click = Some(Box::new(f));
+        self
+    }
+    pub fn on_hover(mut self, f: impl Fn(bool) + 'static) -> Self {
+        self.on_hover = Some(Box::new(f));
+        self
+    }
+    pub fn on_drag(mut self, f: impl Fn(f32, f32) + 'static) -> Self {
+        self.on_drag = Some(Box::new(f));
+        self
+    }
+    pub fn on_scroll(mut self, f: impl Fn(f32, f32) + 'static) -> Self {
+        self.on_scroll = Some(Box::new(f));
+        self
+    }
+    pub fn cursor(mut self, style: CursorStyle) -> Self {
+        self.cursor = Some(style);
         self
     }
 }

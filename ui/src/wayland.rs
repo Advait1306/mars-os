@@ -12,17 +12,20 @@ use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_seat,
-    delegate_shm,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_shm,
     output::{OutputHandler, OutputState},
     reexports::client::{
         globals::registry_queue_init,
-        protocol::{wl_output, wl_seat, wl_shm, wl_surface},
+        protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
         Connection, QueueHandle,
     },
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
-    seat::{SeatHandler, SeatState},
+    seat::{
+        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        SeatHandler, SeatState,
+    },
     shell::wlr_layer::{
         LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
     },
@@ -33,8 +36,10 @@ use smithay_client_toolkit::{
 use crate::app::{SurfaceConfig, View};
 use crate::display_list::build_display_list;
 use crate::element::Element;
+use crate::event_dispatch::EventState;
 use crate::handle::MutationQueue;
-use crate::layout::compute_layout;
+use crate::input::{InputEvent, MouseButton};
+use crate::layout::{compute_layout, LayoutNode};
 use crate::reactive::{self, RenderContext};
 use crate::renderer::SkiaRenderer;
 
@@ -76,9 +81,30 @@ struct WaylandState {
     // Framework
     view_state: ViewState,
     renderer: SkiaRenderer,
+
+    // Input / event dispatch
+    pending_events: Vec<InputEvent>,
+    event_state: EventState,
+    last_layout: Option<LayoutNode>,
+    last_element_tree: Option<Element>,
 }
 
 impl WaylandState {
+    /// Process any pending input events against the cached layout/element trees.
+    fn process_input_events(&mut self) {
+        if self.pending_events.is_empty() {
+            return;
+        }
+        let events = std::mem::take(&mut self.pending_events);
+        if let (Some(layout), Some(elements)) = (&self.last_layout, &self.last_element_tree) {
+            for event in &events {
+                if self.event_state.dispatch(event, layout, elements) {
+                    self.needs_redraw = true;
+                }
+            }
+        }
+    }
+
     fn draw(&mut self) {
         if !self.configured || !self.needs_redraw {
             return;
@@ -147,6 +173,10 @@ impl WaylandState {
             wl_surface.damage_buffer(0, 0, width as i32, height as i32);
             wl_surface.commit();
         }
+
+        // Cache layout and element tree for input event dispatch
+        self.last_layout = Some(layout_tree);
+        self.last_element_tree = Some(element_tree);
 
         self.needs_redraw = false;
     }
@@ -285,10 +315,13 @@ impl SeatHandler for WaylandState {
     fn new_capability(
         &mut self,
         _: &Connection,
-        _: &QueueHandle<Self>,
-        _: wl_seat::WlSeat,
-        _: smithay_client_toolkit::seat::Capability,
+        qh: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: smithay_client_toolkit::seat::Capability,
     ) {
+        if capability == smithay_client_toolkit::seat::Capability::Pointer {
+            self.seat_state.get_pointer(qh, &seat).ok();
+        }
     }
 
     fn remove_capability(
@@ -309,6 +342,72 @@ impl SeatHandler for WaylandState {
     }
 }
 
+impl PointerHandler for WaylandState {
+    fn pointer_frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _pointer: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for event in events {
+            let input = match event.kind {
+                PointerEventKind::Enter { .. } => Some(InputEvent::PointerMove {
+                    x: event.position.0 as f32,
+                    y: event.position.1 as f32,
+                }),
+                PointerEventKind::Leave { .. } => Some(InputEvent::PointerLeave),
+                PointerEventKind::Motion { .. } => Some(InputEvent::PointerMove {
+                    x: event.position.0 as f32,
+                    y: event.position.1 as f32,
+                }),
+                PointerEventKind::Press { button, .. } => {
+                    let mb = match button {
+                        272 => MouseButton::Left,   // BTN_LEFT
+                        273 => MouseButton::Right,  // BTN_RIGHT
+                        274 => MouseButton::Middle, // BTN_MIDDLE
+                        _ => MouseButton::Left,
+                    };
+                    Some(InputEvent::PointerButton {
+                        x: event.position.0 as f32,
+                        y: event.position.1 as f32,
+                        button: mb,
+                        pressed: true,
+                    })
+                }
+                PointerEventKind::Release { button, .. } => {
+                    let mb = match button {
+                        272 => MouseButton::Left,
+                        273 => MouseButton::Right,
+                        274 => MouseButton::Middle,
+                        _ => MouseButton::Left,
+                    };
+                    Some(InputEvent::PointerButton {
+                        x: event.position.0 as f32,
+                        y: event.position.1 as f32,
+                        button: mb,
+                        pressed: false,
+                    })
+                }
+                PointerEventKind::Axis {
+                    horizontal,
+                    vertical,
+                    ..
+                } => Some(InputEvent::PointerScroll {
+                    x: event.position.0 as f32,
+                    y: event.position.1 as f32,
+                    delta_x: horizontal.absolute as f32,
+                    delta_y: vertical.absolute as f32,
+                }),
+            };
+
+            if let Some(input_event) = input {
+                self.pending_events.push(input_event);
+            }
+        }
+    }
+}
+
 impl ShmHandler for WaylandState {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
@@ -325,6 +424,7 @@ impl ProvidesRegistryState for WaylandState {
 delegate_compositor!(WaylandState);
 delegate_output!(WaylandState);
 delegate_layer!(WaylandState);
+delegate_pointer!(WaylandState);
 delegate_registry!(WaylandState);
 delegate_seat!(WaylandState);
 delegate_shm!(WaylandState);
@@ -432,6 +532,10 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         exit: false,
         view_state,
         renderer: SkiaRenderer::new(),
+        pending_events: Vec::new(),
+        event_state: EventState::new(),
+        last_layout: None,
+        last_element_tree: None,
     };
 
     let mut event_loop: EventLoop<WaylandState> =
@@ -446,6 +550,9 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         if state.exit {
             break;
         }
+
+        // Process pending input events against the cached layout/element trees
+        state.process_input_events();
 
         // Check for pending mutations or dirty reactive state and trigger redraw
         if (state.view_state.has_mutations_fn)() || reactive::is_dirty() {
