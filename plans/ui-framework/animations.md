@@ -61,6 +61,12 @@ Animation::spring(400.0, 30.0)                         // Custom stiffness/dampi
 Animation::bezier(300, 0.34, 1.56, 0.64, 1.0)          // Custom cubic bezier curve
 ```
 
+### Interruptibility
+
+**Spring animations are interruptible.** When the target changes mid-animation, the spring continues from its current value and velocity toward the new target — no discontinuity, no restart. This is the primary reason springs are the default.
+
+**Timed animations are not interruptible.** If a timed animation's target changes mid-flight, it snaps to the new target and restarts. Use springs for any property that can change during user interaction (hover, press, drag, etc.). Reserve timed animations for fire-and-forget sequences (loading spinners, one-shot transitions).
+
 ### Delay
 
 All animation types support `.delay_ms()` — on `Animation`, `From`, and `To`:
