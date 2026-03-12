@@ -2,7 +2,7 @@ use crate::animator::Animator;
 use crate::color::Color;
 use crate::element::{Element, ElementKind, ImageSource, TextSpan};
 use crate::layout::{LayoutNode, Rect};
-use crate::style::{Border, TextAlign, TextDecorationStyle};
+use crate::style::{Border, DisplayMode, TextAlign, TextDecorationStyle};
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -111,6 +111,11 @@ fn emit_commands(
     animator: Option<&Animator>,
     commands: &mut Vec<DrawCommand>,
 ) {
+    // Skip hidden elements
+    if element.display == DisplayMode::None {
+        return;
+    }
+
     // Resolve effective bounds and opacity, applying animation overrides for keyed elements.
     let overrides = element
         .key
@@ -178,7 +183,6 @@ fn emit_commands(
             border: element.border.clone(),
         });
     } else if element.border.is_some() {
-        // Border without background
         commands.push(DrawCommand::Rect {
             bounds: bounds.clone(),
             background: crate::color::TRANSPARENT,
@@ -266,7 +270,6 @@ fn emit_commands(
             element.color.unwrap_or(crate::color::WHITE)
         };
 
-        // Convert char-index cursor_offset to byte offset (only for actual value, not placeholder)
         let cursor_byte_offset = element.cursor_offset.map(|char_idx| {
             if value.is_empty() {
                 0
@@ -278,7 +281,6 @@ fn emit_commands(
             }
         });
 
-        // Convert char-index selection_range to byte offsets (only for actual value)
         let selection_byte_range = if !value.is_empty() {
             element.selection_range.map(|(start_char, end_char)| {
                 let start_byte = value.char_indices()
@@ -325,10 +327,8 @@ fn emit_commands(
         });
     }
 
-    // Recurse into children
-    for (child_layout, child_element) in node.children.iter().zip(element.children.iter()) {
-        emit_commands(child_layout, child_element, animator, commands);
-    }
+    // Recurse into children, sorted by z-index
+    emit_children_sorted(node, element, animator, commands);
 
     // Pop in reverse order of push
     if pop_layer {
@@ -339,5 +339,62 @@ fn emit_commands(
     }
     if pop_translate {
         commands.push(DrawCommand::PopTranslate);
+    }
+}
+
+/// Emit children sorted by z-index: negative z first, then no-z (tree order), then positive z.
+fn emit_children_sorted(
+    node: &LayoutNode,
+    element: &Element,
+    animator: Option<&Animator>,
+    commands: &mut Vec<DrawCommand>,
+) {
+    let children: Vec<(usize, &LayoutNode, &Element)> = node
+        .children
+        .iter()
+        .zip(element.children.iter())
+        .enumerate()
+        .map(|(i, (l, e))| (i, l, e))
+        .collect();
+
+    if children.is_empty() {
+        return;
+    }
+
+    // Check if any children have z-index set
+    let has_z_index = children.iter().any(|(_, _, e)| e.z_index.is_some());
+
+    if !has_z_index {
+        // Fast path: no z-index, emit in tree order
+        for (_, child_layout, child_element) in &children {
+            emit_commands(child_layout, child_element, animator, commands);
+        }
+    } else {
+        // Partition into: negative z, no z (tree order), positive z
+        let mut negative: Vec<(i32, usize, &LayoutNode, &Element)> = Vec::new();
+        let mut normal: Vec<(usize, &LayoutNode, &Element)> = Vec::new();
+        let mut positive: Vec<(i32, usize, &LayoutNode, &Element)> = Vec::new();
+
+        for (i, l, e) in &children {
+            match e.z_index {
+                Some(z) if z < 0 => negative.push((z, *i, l, e)),
+                Some(z) if z > 0 => positive.push((z, *i, l, e)),
+                _ => normal.push((*i, l, e)),
+            }
+        }
+
+        // Sort by z-index, stable within same z
+        negative.sort_by_key(|(z, i, _, _)| (*z, *i));
+        positive.sort_by_key(|(z, i, _, _)| (*z, *i));
+
+        for (_, _, l, e) in &negative {
+            emit_commands(l, e, animator, commands);
+        }
+        for (_, l, e) in &normal {
+            emit_commands(l, e, animator, commands);
+        }
+        for (_, _, l, e) in &positive {
+            emit_commands(l, e, animator, commands);
+        }
     }
 }

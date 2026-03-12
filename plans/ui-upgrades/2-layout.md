@@ -1,8 +1,14 @@
 # Layout System Implementation Plan
 
+**Status: IMPLEMENTED** (2026-03-13)
+- Taffy upgraded from 0.7 to 0.9.2
+- All phases (1-5) implemented with 19 passing tests
+
 ## Overview
 
 The UI framework currently uses Taffy 0.7.7 for flexbox layout with a limited subset of CSS properties wired through. This plan covers every CSS layout property needed for a comprehensive UI toolkit, how each maps to Taffy's API, what is already implemented, and what needs custom work.
+
+First upgrade the taffy version using cargo add, to the latest version.
 
 ### Current State Summary
 

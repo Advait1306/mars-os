@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-taffy = "0.7"
+taffy = "0.9"
 skia-safe = { version = "0.82", features = ["textlayout"] }
 resvg = "0.44"
 image = { version = "0.25", default-features = false, features = ["png"] }

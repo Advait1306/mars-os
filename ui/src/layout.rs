@@ -1,7 +1,14 @@
 use crate::element::{Element, ElementKind};
-use crate::style::{Alignment, Direction, Justify};
+use crate::style::{
+    AlignContent, Alignment, Dim, Direction, DisplayMode, FlexWrap, GridAutoFlow, GridPlacement,
+    Justify, Overflow, PositionType, TrackMax, TrackMin, TrackSize,
+};
 use skia_safe::textlayout::FontCollection;
 use taffy::prelude::*;
+use taffy::{
+    GridTemplateComponent, MinMax, RepetitionCount,
+    MinTrackSizingFunction, MaxTrackSizingFunction,
+};
 
 #[derive(Debug, Clone)]
 pub struct Rect {
@@ -20,7 +27,6 @@ pub struct LayoutNode {
 
 #[derive(Debug)]
 pub struct ElementRef {
-    /// Debug description of the element kind
     pub kind_debug: String,
 }
 
@@ -107,7 +113,6 @@ fn build_taffy_node(
         kind_debug: format!("{:?}", std::mem::discriminant(&element.kind)),
     });
 
-    // Build children first
     let child_ids: Vec<NodeId> = element
         .children
         .iter()
@@ -153,81 +158,396 @@ fn build_taffy_node(
     }
 }
 
-#[allow(clippy::field_reassign_with_default)]
-fn element_to_taffy_style(element: &Element) -> Style {
-    let mut style = Style::default();
+// === Dimension conversion helpers ===
 
-    // Direction
-    style.display = Display::Flex;
-    style.flex_direction = match element.direction {
-        Direction::Row => FlexDirection::Row,
-        Direction::Column => FlexDirection::Column,
-    };
-
-    // Size
-    if let Some(w) = element.width {
-        style.size.width = Dimension::Length(w);
+fn dim_to_taffy(d: &Dim) -> Dimension {
+    match d {
+        Dim::Auto => Dimension::auto(),
+        Dim::Px(v) => Dimension::length(*v),
+        Dim::Pct(v) => Dimension::percent(*v),
     }
-    if let Some(h) = element.height {
-        style.size.height = Dimension::Length(h);
-    }
+}
 
-    // Fill width/height
-    if element.fill_width {
-        style.size.width = Dimension::Percent(1.0);
-        style.flex_grow = 1.0;
+#[allow(dead_code)]
+fn dim_to_length_percentage_auto(d: &Dim) -> LengthPercentageAuto {
+    match d {
+        Dim::Auto => LengthPercentageAuto::auto(),
+        Dim::Px(v) => LengthPercentageAuto::length(*v),
+        Dim::Pct(v) => LengthPercentageAuto::percent(*v),
     }
-    if element.fill_height {
-        style.size.height = Dimension::Percent(1.0);
-        style.flex_grow = 1.0;
-    }
+}
 
-    // Flex grow (for spacer)
-    if element.flex_grow > 0.0 {
-        style.flex_grow = element.flex_grow;
-    }
-
-    // Padding
-    style.padding = taffy::geometry::Rect {
-        top: LengthPercentage::Length(element.padding[0]),
-        right: LengthPercentage::Length(element.padding[1]),
-        bottom: LengthPercentage::Length(element.padding[2]),
-        left: LengthPercentage::Length(element.padding[3]),
-    };
-
-    // Gap
-    if element.gap > 0.0 {
-        style.gap = Size {
-            width: LengthPercentage::Length(element.gap),
-            height: LengthPercentage::Length(element.gap),
-        };
-    }
-
-    // Alignment
-    style.align_items = Some(match element.align_items {
+fn map_alignment(a: &Alignment) -> AlignItems {
+    match a {
         Alignment::Start => AlignItems::FlexStart,
         Alignment::Center => AlignItems::Center,
         Alignment::End => AlignItems::FlexEnd,
-    });
+        Alignment::Stretch => AlignItems::Stretch,
+        Alignment::Baseline => AlignItems::Baseline,
+    }
+}
 
-    // Justify
-    style.justify_content = Some(match element.justify {
+fn map_align_self(a: &Alignment) -> AlignSelf {
+    match a {
+        Alignment::Start => AlignSelf::FlexStart,
+        Alignment::Center => AlignSelf::Center,
+        Alignment::End => AlignSelf::FlexEnd,
+        Alignment::Stretch => AlignSelf::Stretch,
+        Alignment::Baseline => AlignSelf::Baseline,
+    }
+}
+
+fn map_justify(j: &Justify) -> JustifyContent {
+    match j {
         Justify::Start => JustifyContent::FlexStart,
         Justify::Center => JustifyContent::Center,
         Justify::End => JustifyContent::FlexEnd,
         Justify::SpaceBetween => JustifyContent::SpaceBetween,
-    });
+        Justify::SpaceAround => JustifyContent::SpaceAround,
+        Justify::SpaceEvenly => JustifyContent::SpaceEvenly,
+    }
+}
+
+fn map_align_content(a: &AlignContent) -> taffy::AlignContent {
+    match a {
+        AlignContent::Start => taffy::AlignContent::FlexStart,
+        AlignContent::Center => taffy::AlignContent::Center,
+        AlignContent::End => taffy::AlignContent::FlexEnd,
+        AlignContent::Stretch => taffy::AlignContent::Stretch,
+        AlignContent::SpaceBetween => taffy::AlignContent::SpaceBetween,
+        AlignContent::SpaceAround => taffy::AlignContent::SpaceAround,
+        AlignContent::SpaceEvenly => taffy::AlignContent::SpaceEvenly,
+    }
+}
+
+fn map_overflow(o: &Overflow) -> taffy::Overflow {
+    match o {
+        Overflow::Visible => taffy::Overflow::Visible,
+        Overflow::Hidden => taffy::Overflow::Hidden,
+        Overflow::Clip => taffy::Overflow::Clip,
+        Overflow::Scroll => taffy::Overflow::Scroll,
+    }
+}
+
+fn map_grid_placement(gp: &GridPlacement) -> taffy::GridPlacement {
+    match gp {
+        GridPlacement::Auto => taffy::GridPlacement::AUTO,
+        GridPlacement::Line(n) => taffy::GridPlacement::from_line_index(*n),
+        GridPlacement::Span(n) => taffy::GridPlacement::from_span(*n),
+    }
+}
+
+fn map_track_min(tm: &TrackMin) -> MinTrackSizingFunction {
+    match tm {
+        TrackMin::Px(v) => MinTrackSizingFunction::from(LengthPercentage::length(*v)),
+        TrackMin::Pct(v) => MinTrackSizingFunction::from(LengthPercentage::percent(*v)),
+        TrackMin::Auto => MinTrackSizingFunction::auto(),
+        TrackMin::MinContent => MinTrackSizingFunction::min_content(),
+        TrackMin::MaxContent => MinTrackSizingFunction::max_content(),
+    }
+}
+
+fn map_track_max(tm: &TrackMax) -> MaxTrackSizingFunction {
+    match tm {
+        TrackMax::Px(v) => MaxTrackSizingFunction::from(LengthPercentage::length(*v)),
+        TrackMax::Pct(v) => MaxTrackSizingFunction::from(LengthPercentage::percent(*v)),
+        TrackMax::Fr(v) => MaxTrackSizingFunction::fr(*v),
+        TrackMax::Auto => MaxTrackSizingFunction::auto(),
+        TrackMax::MinContent => MaxTrackSizingFunction::min_content(),
+        TrackMax::MaxContent => MaxTrackSizingFunction::max_content(),
+    }
+}
+
+fn make_single_track(min: MinTrackSizingFunction, max: MaxTrackSizingFunction) -> GridTemplateComponent<String> {
+    GridTemplateComponent::Single(MinMax { min, max })
+}
+
+fn map_track_size(ts: &TrackSize) -> GridTemplateComponent<String> {
+    match ts {
+        TrackSize::Px(v) => {
+            let lp = LengthPercentage::length(*v);
+            make_single_track(lp.into(), lp.into())
+        }
+        TrackSize::Pct(v) => {
+            let lp = LengthPercentage::percent(*v);
+            make_single_track(lp.into(), lp.into())
+        }
+        TrackSize::Fr(v) => {
+            make_single_track(MinTrackSizingFunction::auto(), MaxTrackSizingFunction::fr(*v))
+        }
+        TrackSize::Auto => {
+            make_single_track(MinTrackSizingFunction::auto(), MaxTrackSizingFunction::auto())
+        }
+        TrackSize::MinContent => {
+            make_single_track(MinTrackSizingFunction::min_content(), MaxTrackSizingFunction::min_content())
+        }
+        TrackSize::MaxContent => {
+            make_single_track(MinTrackSizingFunction::max_content(), MaxTrackSizingFunction::max_content())
+        }
+        TrackSize::MinMax(min, max) => {
+            make_single_track(map_track_min(min), map_track_max(max))
+        }
+        TrackSize::Repeat(count, tracks) => {
+            let inner: Vec<_> = tracks.iter().map(|t| map_track_to_non_repeated(t)).collect();
+            taffy::style_helpers::repeat(RepetitionCount::Count(*count), inner)
+        }
+        TrackSize::AutoFill(tracks) => {
+            let inner: Vec<_> = tracks.iter().map(|t| map_track_to_non_repeated(t)).collect();
+            taffy::style_helpers::repeat(RepetitionCount::AutoFill, inner)
+        }
+        TrackSize::AutoFit(tracks) => {
+            let inner: Vec<_> = tracks.iter().map(|t| map_track_to_non_repeated(t)).collect();
+            taffy::style_helpers::repeat(RepetitionCount::AutoFit, inner)
+        }
+    }
+}
+
+fn map_track_to_non_repeated(ts: &TrackSize) -> MinMax<MinTrackSizingFunction, MaxTrackSizingFunction> {
+    match ts {
+        TrackSize::Px(v) => {
+            let lp = LengthPercentage::length(*v);
+            MinMax { min: lp.into(), max: lp.into() }
+        }
+        TrackSize::Pct(v) => {
+            let lp = LengthPercentage::percent(*v);
+            MinMax { min: lp.into(), max: lp.into() }
+        }
+        TrackSize::Fr(v) => MinMax { min: MinTrackSizingFunction::auto(), max: MaxTrackSizingFunction::fr(*v) },
+        TrackSize::Auto => MinMax { min: MinTrackSizingFunction::auto(), max: MaxTrackSizingFunction::auto() },
+        TrackSize::MinContent => MinMax { min: MinTrackSizingFunction::min_content(), max: MaxTrackSizingFunction::min_content() },
+        TrackSize::MaxContent => MinMax { min: MinTrackSizingFunction::max_content(), max: MaxTrackSizingFunction::max_content() },
+        TrackSize::MinMax(min, max) => MinMax { min: map_track_min(min), max: map_track_max(max) },
+        _ => MinMax { min: MinTrackSizingFunction::auto(), max: MaxTrackSizingFunction::auto() },
+    }
+}
+
+// === Main style conversion ===
+
+#[allow(clippy::field_reassign_with_default)]
+fn element_to_taffy_style(element: &Element) -> Style {
+    let mut style = Style::default();
+
+    // Display mode
+    style.display = match element.display {
+        DisplayMode::Flex => Display::Flex,
+        DisplayMode::Grid => Display::Grid,
+        DisplayMode::None => Display::None,
+    };
+
+    // Box sizing: default to border-box (modern CSS best practice)
+    style.box_sizing = BoxSizing::BorderBox;
+
+    // Direction
+    style.flex_direction = match element.direction {
+        Direction::Row => FlexDirection::Row,
+        Direction::RowReverse => FlexDirection::RowReverse,
+        Direction::Column => FlexDirection::Column,
+        Direction::ColumnReverse => FlexDirection::ColumnReverse,
+    };
+
+    // Flex wrap
+    style.flex_wrap = match element.flex_wrap {
+        FlexWrap::NoWrap => taffy::FlexWrap::NoWrap,
+        FlexWrap::Wrap => taffy::FlexWrap::Wrap,
+        FlexWrap::WrapReverse => taffy::FlexWrap::WrapReverse,
+    };
+
+    // Size
+    if let Some(ref w) = element.width {
+        style.size.width = dim_to_taffy(w);
+    }
+    if let Some(ref h) = element.height {
+        style.size.height = dim_to_taffy(h);
+    }
+
+    // Fill width/height (backward compat)
+    if element.fill_width {
+        style.size.width = Dimension::percent(1.0);
+        style.flex_grow = 1.0;
+    }
+    if element.fill_height {
+        style.size.height = Dimension::percent(1.0);
+        style.flex_grow = 1.0;
+    }
+
+    // Min/max size
+    if let Some(ref d) = element.min_width {
+        style.min_size.width = dim_to_taffy(d);
+    }
+    if let Some(ref d) = element.min_height {
+        style.min_size.height = dim_to_taffy(d);
+    }
+    if let Some(ref d) = element.max_width {
+        style.max_size.width = dim_to_taffy(d);
+    }
+    if let Some(ref d) = element.max_height {
+        style.max_size.height = dim_to_taffy(d);
+    }
+
+    // Aspect ratio
+    style.aspect_ratio = element.aspect_ratio;
+
+    // Flex grow (for spacer and explicit)
+    if element.flex_grow > 0.0 {
+        style.flex_grow = element.flex_grow;
+    }
+
+    // Flex shrink
+    if let Some(s) = element.flex_shrink {
+        style.flex_shrink = s;
+    }
+
+    // Flex basis
+    if let Some(ref b) = element.flex_basis {
+        style.flex_basis = dim_to_taffy(b);
+    }
+
+    // Padding
+    style.padding = taffy::geometry::Rect {
+        top: LengthPercentage::length(element.padding[0]),
+        right: LengthPercentage::length(element.padding[1]),
+        bottom: LengthPercentage::length(element.padding[2]),
+        left: LengthPercentage::length(element.padding[3]),
+    };
+
+    // Margin
+    let margin_val = |i: usize| -> LengthPercentageAuto {
+        if element.margin_auto[i] {
+            LengthPercentageAuto::auto()
+        } else if element.margin[i] != 0.0 {
+            LengthPercentageAuto::length(element.margin[i])
+        } else {
+            LengthPercentageAuto::length(0.0)
+        }
+    };
+    style.margin = taffy::geometry::Rect {
+        top: margin_val(0),
+        right: margin_val(1),
+        bottom: margin_val(2),
+        left: margin_val(3),
+    };
+
+    // Border (layout contribution)
+    if let Some(ref border) = element.border {
+        let bw = LengthPercentage::length(border.width);
+        style.border = taffy::geometry::Rect {
+            top: bw,
+            right: bw,
+            bottom: bw,
+            left: bw,
+        };
+    }
+
+    // Gap
+    let row_gap = element.row_gap.unwrap_or(element.gap);
+    let col_gap = element.column_gap.unwrap_or(element.gap);
+    if row_gap > 0.0 || col_gap > 0.0 {
+        style.gap = Size {
+            width: LengthPercentage::length(col_gap),
+            height: LengthPercentage::length(row_gap),
+        };
+    }
+
+    // Alignment
+    style.align_items = Some(map_alignment(&element.align_items));
+
+    // Align self
+    if let Some(ref a) = element.align_self {
+        style.align_self = Some(map_align_self(a));
+    }
+
+    // Align content
+    if let Some(ref a) = element.align_content {
+        style.align_content = Some(map_align_content(a));
+    }
+
+    // Justify content
+    style.justify_content = Some(map_justify(&element.justify));
+
+    // Justify items (grid)
+    if let Some(ref a) = element.justify_items {
+        style.justify_items = Some(map_alignment(a));
+    }
+
+    // Justify self (grid)
+    if let Some(ref a) = element.justify_self {
+        style.justify_self = Some(map_align_self(a));
+    }
+
+    // Position
+    style.position = match element.position {
+        PositionType::Relative => Position::Relative,
+        PositionType::Absolute => Position::Absolute,
+    };
+
+    // Inset
+    let inset_val = |v: Option<f32>| -> LengthPercentageAuto {
+        match v {
+            Some(px) => LengthPercentageAuto::length(px),
+            None => LengthPercentageAuto::auto(),
+        }
+    };
+    style.inset = taffy::geometry::Rect {
+        top: inset_val(element.inset[0]),
+        right: inset_val(element.inset[1]),
+        bottom: inset_val(element.inset[2]),
+        left: inset_val(element.inset[3]),
+    };
+
+    // Overflow
+    style.overflow = taffy::geometry::Point {
+        x: map_overflow(&element.overflow_x),
+        y: map_overflow(&element.overflow_y),
+    };
+
+    // Grid template
+    if !element.grid_template_columns.is_empty() {
+        style.grid_template_columns = element.grid_template_columns.iter().map(map_track_size).collect();
+    }
+    if !element.grid_template_rows.is_empty() {
+        style.grid_template_rows = element.grid_template_rows.iter().map(map_track_size).collect();
+    }
+
+    // Grid auto sizing
+    if !element.grid_auto_columns.is_empty() {
+        style.grid_auto_columns = element.grid_auto_columns.iter().map(map_track_to_non_repeated).collect();
+    }
+    if !element.grid_auto_rows.is_empty() {
+        style.grid_auto_rows = element.grid_auto_rows.iter().map(map_track_to_non_repeated).collect();
+    }
+
+    // Grid auto flow
+    style.grid_auto_flow = match element.grid_auto_flow {
+        GridAutoFlow::Row => taffy::GridAutoFlow::Row,
+        GridAutoFlow::Column => taffy::GridAutoFlow::Column,
+        GridAutoFlow::RowDense => taffy::GridAutoFlow::RowDense,
+        GridAutoFlow::ColumnDense => taffy::GridAutoFlow::ColumnDense,
+    };
+
+    // Grid placement
+    if let Some((ref start, ref end)) = element.grid_column {
+        style.grid_column = taffy::geometry::Line {
+            start: map_grid_placement(start),
+            end: map_grid_placement(end),
+        };
+    }
+    if let Some((ref start, ref end)) = element.grid_row {
+        style.grid_row = taffy::geometry::Line {
+            start: map_grid_placement(start),
+            end: map_grid_placement(end),
+        };
+    }
 
     // For divider elements, set a fixed size on the cross axis
     if let ElementKind::Divider { thickness } = &element.kind {
         match element.direction {
-            Direction::Row => {
-                style.size.height = Dimension::Length(*thickness);
-                style.size.width = Dimension::Percent(1.0);
+            Direction::Row | Direction::RowReverse => {
+                style.size.height = Dimension::length(*thickness);
+                style.size.width = Dimension::percent(1.0);
             }
-            Direction::Column => {
-                style.size.width = Dimension::Length(*thickness);
-                style.size.height = Dimension::Percent(1.0);
+            Direction::Column | Direction::ColumnReverse => {
+                style.size.width = Dimension::length(*thickness);
+                style.size.height = Dimension::percent(1.0);
             }
         }
     }
@@ -297,11 +617,9 @@ mod tests {
             .child(container().width(50.0).height(30.0))
             .child(container().width(70.0).height(30.0));
         let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
-        // Row should be wide enough for both children
         assert_eq!(layout.children.len(), 2);
         assert_eq!(layout.children[0].bounds.width, 50.0);
         assert_eq!(layout.children[1].bounds.width, 70.0);
-        // Second child should start after first
         assert!(layout.children[1].bounds.x >= 50.0);
     }
 
@@ -327,7 +645,7 @@ mod tests {
             .child(container().width(50.0).height(30.0))
             .child(container().width(50.0).height(30.0));
         let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
-        assert_eq!(layout.children[1].bounds.x, 60.0); // 50 + 10 gap
+        assert_eq!(layout.children[1].bounds.x, 60.0);
     }
 
     #[test]
@@ -338,7 +656,6 @@ mod tests {
             .child(spacer())
             .child(container().width(50.0).height(30.0));
         let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
-        // Last child should be at the end
         assert!((layout.children[2].bounds.x - 150.0).abs() < 1.0);
     }
 
@@ -363,7 +680,6 @@ mod tests {
             .child(container().width(100.0).height(20.0));
         let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         assert_eq!(layout.children.len(), 2);
-        // First child is a row with 2 children
         assert_eq!(layout.children[0].children.len(), 2);
     }
 
@@ -376,7 +692,94 @@ mod tests {
             .child(container().width(50.0).height(30.0));
         let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let child = &layout.children[0];
-        // Should be centered: (200 - 50) / 2 = 75
         assert!((child.bounds.x - 75.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_margin() {
+        let tree = container()
+            .width(200.0)
+            .height(100.0)
+            .child(container().width(50.0).height(30.0).margin(10.0));
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
+        let child = &layout.children[0];
+        assert!((child.bounds.x - 10.0).abs() < 1.0);
+        assert!((child.bounds.y - 10.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_min_max_size() {
+        let tree = container()
+            .width(200.0)
+            .height(100.0)
+            .child(container().fill_width().height(30.0).max_width(80.0));
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
+        let child = &layout.children[0];
+        assert!(child.bounds.width <= 80.0);
+    }
+
+    #[test]
+    fn test_display_none() {
+        let tree = container()
+            .width(200.0)
+            .height(100.0)
+            .child(container().width(50.0).height(30.0).hidden());
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
+        let child = &layout.children[0];
+        assert_eq!(child.bounds.width, 0.0);
+        assert_eq!(child.bounds.height, 0.0);
+    }
+
+    #[test]
+    fn test_flex_wrap() {
+        let tree = row()
+            .width(100.0)
+            .wrap()
+            .child(container().width(60.0).height(30.0))
+            .child(container().width(60.0).height(30.0));
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
+        // Second child should wrap to a new line
+        assert!(layout.children[1].bounds.y >= 30.0);
+    }
+
+    #[test]
+    fn test_absolute_position() {
+        let tree = container()
+            .width(200.0)
+            .height(200.0)
+            .child(
+                container()
+                    .width(50.0)
+                    .height(50.0)
+                    .position_absolute()
+                    .top(10.0)
+                    .left(10.0),
+            );
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
+        let child = &layout.children[0];
+        assert!((child.bounds.x - 10.0).abs() < 1.0);
+        assert!((child.bounds.y - 10.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_percentage_width() {
+        let tree = container()
+            .width(200.0)
+            .height(100.0)
+            .child(container().width_pct(0.5).height(30.0));
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
+        let child = &layout.children[0];
+        assert!((child.bounds.width - 100.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_aspect_ratio() {
+        let tree = container()
+            .width(200.0)
+            .height(200.0)
+            .child(container().width(100.0).aspect_ratio(2.0));
+        let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
+        let child = &layout.children[0];
+        assert!((child.bounds.height - 50.0).abs() < 1.0);
     }
 }

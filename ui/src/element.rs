@@ -1,7 +1,10 @@
 use crate::animation::{Animation, From, To};
 use crate::color::Color;
 use crate::input::CursorStyle;
-use crate::style::{Alignment, Border, Direction, Justify, TextAlign, TextDecorationStyle};
+use crate::style::{
+    AlignContent, Alignment, Border, Dim, Direction, DisplayMode, FlexWrap, GridAutoFlow,
+    GridPlacement, Justify, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
+};
 
 pub enum ElementKind {
     Container,
@@ -49,15 +52,54 @@ pub struct Element {
     pub children: Vec<Element>,
 
     // Layout props
-    pub width: Option<f32>,
-    pub height: Option<f32>,
+    pub width: Option<Dim>,
+    pub height: Option<Dim>,
     pub fill_width: bool,
     pub fill_height: bool,
     pub padding: [f32; 4], // top, right, bottom, left
     pub gap: f32,
+    pub row_gap: Option<f32>,
+    pub column_gap: Option<f32>,
     pub align_items: Alignment,
     pub justify: Justify,
     pub flex_grow: f32,
+
+    // Phase 1: Box model
+    pub margin: [f32; 4],       // top, right, bottom, left
+    pub margin_auto: [bool; 4], // per-side auto margin
+    pub min_width: Option<Dim>,
+    pub min_height: Option<Dim>,
+    pub max_width: Option<Dim>,
+    pub max_height: Option<Dim>,
+    pub aspect_ratio: Option<f32>,
+    pub display: DisplayMode,
+
+    // Phase 2: Flexbox
+    pub flex_shrink: Option<f32>,
+    pub flex_basis: Option<Dim>,
+    pub flex_wrap: FlexWrap,
+    pub align_self: Option<Alignment>,
+    pub align_content: Option<AlignContent>,
+
+    // Phase 3: Positioning
+    pub position: PositionType,
+    pub inset: [Option<f32>; 4], // top, right, bottom, left
+    pub z_index: Option<i32>,
+
+    // Phase 4: Overflow
+    pub overflow_x: Overflow,
+    pub overflow_y: Overflow,
+
+    // Phase 5: Grid
+    pub grid_template_columns: Vec<TrackSize>,
+    pub grid_template_rows: Vec<TrackSize>,
+    pub grid_column: Option<(GridPlacement, GridPlacement)>,
+    pub grid_row: Option<(GridPlacement, GridPlacement)>,
+    pub grid_auto_flow: GridAutoFlow,
+    pub grid_auto_columns: Vec<TrackSize>,
+    pub grid_auto_rows: Vec<TrackSize>,
+    pub justify_items: Option<Alignment>,
+    pub justify_self: Option<Alignment>,
 
     // Visual props
     pub background: Option<Color>,
@@ -123,9 +165,44 @@ impl Default for Element {
             fill_height: false,
             padding: [0.0; 4],
             gap: 0.0,
+            row_gap: None,
+            column_gap: None,
             align_items: Alignment::Start,
             justify: Justify::Start,
             flex_grow: 0.0,
+            // Phase 1
+            margin: [0.0; 4],
+            margin_auto: [false; 4],
+            min_width: None,
+            min_height: None,
+            max_width: None,
+            max_height: None,
+            aspect_ratio: None,
+            display: DisplayMode::Flex,
+            // Phase 2
+            flex_shrink: None,
+            flex_basis: None,
+            flex_wrap: FlexWrap::NoWrap,
+            align_self: None,
+            align_content: None,
+            // Phase 3
+            position: PositionType::Relative,
+            inset: [None; 4],
+            z_index: None,
+            // Phase 4
+            overflow_x: Overflow::Visible,
+            overflow_y: Overflow::Visible,
+            // Phase 5
+            grid_template_columns: Vec::new(),
+            grid_template_rows: Vec::new(),
+            grid_column: None,
+            grid_row: None,
+            grid_auto_flow: GridAutoFlow::Row,
+            grid_auto_columns: Vec::new(),
+            grid_auto_rows: Vec::new(),
+            justify_items: None,
+            justify_self: None,
+            // Visual
             background: None,
             corner_radius: 0.0,
             border: None,
@@ -197,6 +274,14 @@ pub fn stack() -> Element {
     Element {
         kind: ElementKind::Container,
         direction: Direction::Column,
+        ..Default::default()
+    }
+}
+
+pub fn grid() -> Element {
+    Element {
+        kind: ElementKind::Container,
+        display: DisplayMode::Grid,
         ..Default::default()
     }
 }
@@ -290,18 +375,35 @@ pub fn text_input(value: &str) -> Element {
 
 // Chainable style methods
 impl Element {
-    // Layout
+    // === Layout ===
+
     pub fn width(mut self, w: f32) -> Self {
-        self.width = Some(w);
+        self.width = Some(Dim::Px(w));
         self
     }
     pub fn height(mut self, h: f32) -> Self {
-        self.height = Some(h);
+        self.height = Some(Dim::Px(h));
         self
     }
     pub fn size(mut self, w: f32, h: f32) -> Self {
-        self.width = Some(w);
-        self.height = Some(h);
+        self.width = Some(Dim::Px(w));
+        self.height = Some(Dim::Px(h));
+        self
+    }
+    pub fn width_pct(mut self, pct: f32) -> Self {
+        self.width = Some(Dim::Pct(pct));
+        self
+    }
+    pub fn height_pct(mut self, pct: f32) -> Self {
+        self.height = Some(Dim::Pct(pct));
+        self
+    }
+    pub fn width_auto(mut self) -> Self {
+        self.width = Some(Dim::Auto);
+        self
+    }
+    pub fn height_auto(mut self) -> Self {
+        self.height = Some(Dim::Auto);
         self
     }
     pub fn fill_width(mut self) -> Self {
@@ -328,6 +430,14 @@ impl Element {
         self.gap = g;
         self
     }
+    pub fn row_gap(mut self, g: f32) -> Self {
+        self.row_gap = Some(g);
+        self
+    }
+    pub fn column_gap(mut self, g: f32) -> Self {
+        self.column_gap = Some(g);
+        self
+    }
     pub fn align_items(mut self, a: Alignment) -> Self {
         self.align_items = a;
         self
@@ -336,8 +446,214 @@ impl Element {
         self.justify = j;
         self
     }
+    pub fn flex_grow(mut self, g: f32) -> Self {
+        self.flex_grow = g;
+        self
+    }
 
-    // Visual
+    // === Phase 1: Box Model ===
+
+    pub fn margin(mut self, m: f32) -> Self {
+        self.margin = [m, m, m, m];
+        self
+    }
+    pub fn margin_xy(mut self, x: f32, y: f32) -> Self {
+        self.margin = [y, x, y, x];
+        self
+    }
+    pub fn margin_edges(mut self, t: f32, r: f32, b: f32, l: f32) -> Self {
+        self.margin = [t, r, b, l];
+        self
+    }
+    pub fn margin_x_auto(mut self) -> Self {
+        self.margin_auto[1] = true; // right
+        self.margin_auto[3] = true; // left
+        self
+    }
+    pub fn min_width(mut self, w: f32) -> Self {
+        self.min_width = Some(Dim::Px(w));
+        self
+    }
+    pub fn min_height(mut self, h: f32) -> Self {
+        self.min_height = Some(Dim::Px(h));
+        self
+    }
+    pub fn max_width(mut self, w: f32) -> Self {
+        self.max_width = Some(Dim::Px(w));
+        self
+    }
+    pub fn max_height(mut self, h: f32) -> Self {
+        self.max_height = Some(Dim::Px(h));
+        self
+    }
+    pub fn min_width_pct(mut self, pct: f32) -> Self {
+        self.min_width = Some(Dim::Pct(pct));
+        self
+    }
+    pub fn min_height_pct(mut self, pct: f32) -> Self {
+        self.min_height = Some(Dim::Pct(pct));
+        self
+    }
+    pub fn max_width_pct(mut self, pct: f32) -> Self {
+        self.max_width = Some(Dim::Pct(pct));
+        self
+    }
+    pub fn max_height_pct(mut self, pct: f32) -> Self {
+        self.max_height = Some(Dim::Pct(pct));
+        self
+    }
+    pub fn aspect_ratio(mut self, ratio: f32) -> Self {
+        self.aspect_ratio = Some(ratio);
+        self
+    }
+    pub fn hidden(mut self) -> Self {
+        self.display = DisplayMode::None;
+        self
+    }
+    pub fn visible(mut self) -> Self {
+        self.display = DisplayMode::Flex;
+        self
+    }
+
+    // === Phase 2: Flexbox ===
+
+    pub fn flex_shrink(mut self, s: f32) -> Self {
+        self.flex_shrink = Some(s);
+        self
+    }
+    pub fn flex_basis_px(mut self, px: f32) -> Self {
+        self.flex_basis = Some(Dim::Px(px));
+        self
+    }
+    pub fn flex_basis_pct(mut self, pct: f32) -> Self {
+        self.flex_basis = Some(Dim::Pct(pct));
+        self
+    }
+    pub fn wrap(mut self) -> Self {
+        self.flex_wrap = FlexWrap::Wrap;
+        self
+    }
+    pub fn wrap_reverse(mut self) -> Self {
+        self.flex_wrap = FlexWrap::WrapReverse;
+        self
+    }
+    pub fn no_wrap(mut self) -> Self {
+        self.flex_wrap = FlexWrap::NoWrap;
+        self
+    }
+    pub fn direction(mut self, d: Direction) -> Self {
+        self.direction = d;
+        self
+    }
+    pub fn align_self(mut self, a: Alignment) -> Self {
+        self.align_self = Some(a);
+        self
+    }
+    pub fn align_content(mut self, a: AlignContent) -> Self {
+        self.align_content = Some(a);
+        self
+    }
+
+    // === Phase 3: Positioning ===
+
+    pub fn position_relative(mut self) -> Self {
+        self.position = PositionType::Relative;
+        self
+    }
+    pub fn position_absolute(mut self) -> Self {
+        self.position = PositionType::Absolute;
+        self
+    }
+    pub fn inset(mut self, top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        self.inset = [Some(top), Some(right), Some(bottom), Some(left)];
+        self
+    }
+    pub fn top(mut self, v: f32) -> Self {
+        self.inset[0] = Some(v);
+        self
+    }
+    pub fn right(mut self, v: f32) -> Self {
+        self.inset[1] = Some(v);
+        self
+    }
+    pub fn bottom(mut self, v: f32) -> Self {
+        self.inset[2] = Some(v);
+        self
+    }
+    pub fn left(mut self, v: f32) -> Self {
+        self.inset[3] = Some(v);
+        self
+    }
+    pub fn z_index(mut self, z: i32) -> Self {
+        self.z_index = Some(z);
+        self
+    }
+
+    // === Phase 4: Overflow ===
+
+    pub fn overflow(mut self, o: Overflow) -> Self {
+        self.overflow_x = o;
+        self.overflow_y = o;
+        self
+    }
+    pub fn overflow_x(mut self, o: Overflow) -> Self {
+        self.overflow_x = o;
+        self
+    }
+    pub fn overflow_y(mut self, o: Overflow) -> Self {
+        self.overflow_y = o;
+        self
+    }
+
+    // === Phase 5: Grid ===
+
+    pub fn grid_template_columns(mut self, tracks: Vec<TrackSize>) -> Self {
+        self.grid_template_columns = tracks;
+        self
+    }
+    pub fn grid_template_rows(mut self, tracks: Vec<TrackSize>) -> Self {
+        self.grid_template_rows = tracks;
+        self
+    }
+    pub fn grid_column(mut self, start: i16, end: i16) -> Self {
+        self.grid_column = Some((GridPlacement::Line(start), GridPlacement::Line(end)));
+        self
+    }
+    pub fn grid_column_span(mut self, start: i16, span: u16) -> Self {
+        self.grid_column = Some((GridPlacement::Line(start), GridPlacement::Span(span)));
+        self
+    }
+    pub fn grid_row(mut self, start: i16, end: i16) -> Self {
+        self.grid_row = Some((GridPlacement::Line(start), GridPlacement::Line(end)));
+        self
+    }
+    pub fn grid_row_span(mut self, start: i16, span: u16) -> Self {
+        self.grid_row = Some((GridPlacement::Line(start), GridPlacement::Span(span)));
+        self
+    }
+    pub fn grid_auto_flow(mut self, flow: GridAutoFlow) -> Self {
+        self.grid_auto_flow = flow;
+        self
+    }
+    pub fn grid_auto_columns(mut self, tracks: Vec<TrackSize>) -> Self {
+        self.grid_auto_columns = tracks;
+        self
+    }
+    pub fn grid_auto_rows(mut self, tracks: Vec<TrackSize>) -> Self {
+        self.grid_auto_rows = tracks;
+        self
+    }
+    pub fn justify_items(mut self, a: Alignment) -> Self {
+        self.justify_items = Some(a);
+        self
+    }
+    pub fn justify_self(mut self, a: Alignment) -> Self {
+        self.justify_self = Some(a);
+        self
+    }
+
+    // === Visual ===
+
     pub fn background(mut self, c: Color) -> Self {
         self.background = Some(c);
         self
@@ -359,7 +675,8 @@ impl Element {
         self
     }
 
-    // Children
+    // === Children ===
+
     pub fn child(mut self, child: Element) -> Self {
         self.children.push(child);
         self
@@ -369,13 +686,15 @@ impl Element {
         self
     }
 
-    // Identity
+    // === Identity ===
+
     pub fn key(mut self, k: &str) -> Self {
         self.key = Some(k.to_string());
         self
     }
 
-    // Text/Image-specific
+    // === Text/Image-specific ===
+
     pub fn font_size(mut self, s: f32) -> Self {
         self.font_size = s;
         self
@@ -460,7 +779,8 @@ impl Element {
         self
     }
 
-    // Event handlers
+    // === Event handlers ===
+
     pub fn on_click(mut self, f: impl Fn() + 'static) -> Self {
         self.on_click = Some(Box::new(f));
         self
@@ -499,7 +819,8 @@ impl Element {
         self
     }
 
-    // Animation
+    // === Animation ===
+
     pub fn animate(mut self, animation: Animation) -> Self {
         self.animate = Some(animation);
         self

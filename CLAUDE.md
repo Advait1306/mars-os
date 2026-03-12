@@ -21,3 +21,7 @@ This project targets Linux (ARM64/x86_64). It **cannot be built on macOS** — W
 - `overlays/` mirrors the VM filesystem — drop files at their target paths
 - `scripts/apply-overlays.sh` copies overlays to running VM via SSH
 - scp uses `-P` (uppercase) for port, not `-p` like ssh
+
+# Development
+1. Don't install packages by adding them to cargo.toml, always use `cargo add`.
+2. Don't create a new project in the workspace by creating the folder, always use `cargo new` command
