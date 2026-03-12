@@ -13,7 +13,7 @@ use crate::input::{
     BeforeInputEvent, ClickEvent, ClipboardData, ClipboardEvent, CursorStyle, DragData, DragEvent,
     DropEffect, EventResult, FocusEvent, InputEvent, InputType, KeyCode, KeyValue, KeyboardEvent,
     Modifiers, MouseButton, PointerEvent, PointerType, ScrollEndEvent, ScrollSource,
-    TextInputEvent, WheelEvent,
+    TextInputEvent, TouchEvent, WheelEvent,
 };
 use crate::layout::LayoutNode;
 
@@ -21,6 +21,13 @@ use crate::layout::LayoutNode;
 enum ClipboardAction {
     Copy,
     Cut,
+}
+
+/// Internal touch event type for dispatch.
+enum TouchEventType {
+    Start,
+    Move,
+    End,
 }
 
 /// Drag threshold in pixels -- movement beyond this triggers a drag instead of click.
@@ -92,6 +99,13 @@ pub struct EventState {
     dnd_effect_allowed: DropEffect,
     /// Current drop target element (for DragEnter/DragLeave tracking).
     dnd_over_element: Option<usize>,
+
+    // Touch state
+    /// Active touch points: id -> (x, y, time).
+    /// The first touch to go down is the "primary" touch and gets coerced to pointer events.
+    active_touches: HashMap<i32, (f32, f32, u32)>,
+    /// The ID of the primary touch (first finger down), used for touch-to-pointer coercion.
+    primary_touch_id: Option<i32>,
 }
 
 impl EventState {
@@ -121,6 +135,8 @@ impl EventState {
             dnd_data: DragData::new(),
             dnd_effect_allowed: DropEffect::None,
             dnd_over_element: None,
+            active_touches: HashMap::new(),
+            primary_touch_id: None,
         }
     }
 
@@ -205,6 +221,22 @@ impl EventState {
 
             InputEvent::CompositionEnd { text } => {
                 self.handle_composition_end(text, root_element)
+            }
+
+            InputEvent::TouchDown { id, x, y, time } => {
+                self.handle_touch_down(*id, *x, *y, *time, layout, root_element)
+            }
+
+            InputEvent::TouchMotion { id, x, y, time } => {
+                self.handle_touch_motion(*id, *x, *y, *time, layout, root_element)
+            }
+
+            InputEvent::TouchUp { id, time } => {
+                self.handle_touch_up(*id, *time, layout, root_element)
+            }
+
+            InputEvent::TouchCancel => {
+                self.handle_touch_cancel(root_element)
             }
         }
     }
@@ -1453,6 +1485,201 @@ impl EventState {
             .get(&pointer_id)
             .copied()
             .unwrap_or(hit_element)
+    }
+
+    // -----------------------------------------------------------------------
+    // Touch events
+    // -----------------------------------------------------------------------
+
+    /// Handle a new touch point contacting the surface.
+    /// The first touch becomes the "primary" touch and is coerced to pointer events.
+    fn handle_touch_down(
+        &mut self,
+        id: i32,
+        x: f32,
+        y: f32,
+        time: u32,
+        layout: &LayoutNode,
+        root_element: &Element,
+    ) -> bool {
+        self.active_touches.insert(id, (x, y, time));
+
+        let is_primary = self.primary_touch_id.is_none();
+        if is_primary {
+            self.primary_touch_id = Some(id);
+            // Coerce primary touch to pointer events (PointerMove + PointerDown)
+            self.handle_pointer_move(x, y, layout, root_element);
+            self.handle_pointer_down(x, y, MouseButton::Left, time, layout, root_element);
+        }
+
+        // Dispatch native TouchStart event
+        let touch_event = TouchEvent {
+            touch_id: id,
+            x,
+            y,
+            width: None,
+            height: None,
+            orientation: None,
+            time,
+        };
+        self.dispatch_touch_event(&touch_event, layout, root_element, TouchEventType::Start);
+
+        true
+    }
+
+    /// Handle a touch point moving.
+    fn handle_touch_motion(
+        &mut self,
+        id: i32,
+        x: f32,
+        y: f32,
+        time: u32,
+        layout: &LayoutNode,
+        root_element: &Element,
+    ) -> bool {
+        self.active_touches.insert(id, (x, y, time));
+
+        if self.primary_touch_id == Some(id) {
+            // Coerce primary touch motion to pointer move
+            self.handle_pointer_move(x, y, layout, root_element);
+        }
+
+        let touch_event = TouchEvent {
+            touch_id: id,
+            x,
+            y,
+            width: None,
+            height: None,
+            orientation: None,
+            time,
+        };
+        self.dispatch_touch_event(&touch_event, layout, root_element, TouchEventType::Move);
+
+        true
+    }
+
+    /// Handle a touch point being lifted.
+    fn handle_touch_up(
+        &mut self,
+        id: i32,
+        time: u32,
+        layout: &LayoutNode,
+        root_element: &Element,
+    ) -> bool {
+        let pos = self.active_touches.remove(&id);
+
+        if self.primary_touch_id == Some(id) {
+            // Coerce primary touch up to pointer up
+            let (x, y) = pos.map(|(x, y, _)| (x, y)).unwrap_or((self.pointer_x, self.pointer_y));
+            self.handle_pointer_up(x, y, MouseButton::Left, time, layout, root_element);
+            self.primary_touch_id = None;
+        }
+
+        let (x, y) = pos.map(|(x, y, _)| (x, y)).unwrap_or((0.0, 0.0));
+        let touch_event = TouchEvent {
+            touch_id: id,
+            x,
+            y,
+            width: None,
+            height: None,
+            orientation: None,
+            time,
+        };
+        self.dispatch_touch_event(&touch_event, layout, root_element, TouchEventType::End);
+
+        true
+    }
+
+    /// Handle all active touches being cancelled by the system.
+    fn handle_touch_cancel(&mut self, root_element: &Element) -> bool {
+        // Fire TouchCancel on all elements that have active touches
+        let touch_event = TouchEvent {
+            touch_id: 0,
+            x: 0.0,
+            y: 0.0,
+            width: None,
+            height: None,
+            orientation: None,
+            time: 0,
+        };
+
+        // Notify any hovered elements via their cancel handlers
+        for &idx in &self.hovered {
+            if let Some(element) = get_element_by_preorder(root_element, idx) {
+                if let Some(h) = element.on_touch_cancel.as_ref() {
+                    h(&touch_event);
+                }
+            }
+        }
+
+        // If there was a primary touch, simulate pointer leave
+        if self.primary_touch_id.is_some() {
+            self.handle_pointer_leave(root_element);
+        }
+
+        // Clear all touch state
+        self.active_touches.clear();
+        self.primary_touch_id = None;
+
+        true
+    }
+
+    /// Dispatch a native touch event via target + bubble phases.
+    fn dispatch_touch_event(
+        &self,
+        event: &TouchEvent,
+        layout: &LayoutNode,
+        root_element: &Element,
+        event_type: TouchEventType,
+    ) {
+        // Hit test to find the target element
+        let hit_path = hit_test(layout, root_element, event.x, event.y);
+        if hit_path.is_empty() {
+            return;
+        }
+
+        let target_idx = hit_path[0];
+        let path = build_path_to_element(root_element, target_idx);
+        if path.is_empty() {
+            return;
+        }
+
+        let mut stopped = false;
+
+        // Target phase
+        let target_pos = path.len() - 1;
+        let target = path[target_pos];
+        if let Some(element) = get_element_by_preorder(root_element, target) {
+            let handler = match event_type {
+                TouchEventType::Start => element.on_touch_start.as_ref(),
+                TouchEventType::Move => element.on_touch_move.as_ref(),
+                TouchEventType::End => element.on_touch_end.as_ref(),
+            };
+            if let Some(h) = handler {
+                let mut default_prevented = false;
+                apply_event_result(h(event), &mut stopped, &mut default_prevented);
+            }
+        }
+
+        // Bubble phase
+        if !stopped {
+            for &idx in path[..target_pos].iter().rev() {
+                if stopped {
+                    break;
+                }
+                if let Some(element) = get_element_by_preorder(root_element, idx) {
+                    let handler = match event_type {
+                        TouchEventType::Start => element.on_touch_start.as_ref(),
+                        TouchEventType::Move => element.on_touch_move.as_ref(),
+                        TouchEventType::End => element.on_touch_end.as_ref(),
+                    };
+                    if let Some(h) = handler {
+                        let mut default_prevented = false;
+                        apply_event_result(h(event), &mut stopped, &mut default_prevented);
+                    }
+                }
+            }
+        }
     }
 }
 

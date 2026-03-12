@@ -345,6 +345,11 @@ impl Default for Element {
             on_drop: None,
             on_drag_enter: None,
             on_drag_leave: None,
+            // Touch
+            on_touch_start: None,
+            on_touch_move: None,
+            on_touch_end: None,
+            on_touch_cancel: None,
             // Legacy
             on_hover: None,
             on_drag: None,
@@ -1051,6 +1056,25 @@ impl Element {
     }
     pub fn on_paste(mut self, f: impl Fn(&ClipboardEvent) -> EventResult + 'static) -> Self {
         self.on_paste = Some(Box::new(f));
+        self
+    }
+
+    // === Touch events ===
+
+    pub fn on_touch_start(mut self, f: impl Fn(&TouchEvent) -> EventResult + 'static) -> Self {
+        self.on_touch_start = Some(Box::new(f));
+        self
+    }
+    pub fn on_touch_move(mut self, f: impl Fn(&TouchEvent) -> EventResult + 'static) -> Self {
+        self.on_touch_move = Some(Box::new(f));
+        self
+    }
+    pub fn on_touch_end(mut self, f: impl Fn(&TouchEvent) -> EventResult + 'static) -> Self {
+        self.on_touch_end = Some(Box::new(f));
+        self
+    }
+    pub fn on_touch_cancel(mut self, f: impl Fn(&TouchEvent) + 'static) -> Self {
+        self.on_touch_cancel = Some(Box::new(f));
         self
     }
 

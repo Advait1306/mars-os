@@ -1757,7 +1757,7 @@ pub struct ClickEvent {
 8. Integrate wl_data_device for external DnD (initiating drags to other apps)
 9. Tests: internal DnD lifecycle, drop acceptance/rejection
 
-### Phase 10: Clipboard
+### Phase 10: Clipboard -- DONE (Wayland integration deferred)
 
 **Goal**: Copy, cut, paste support.
 
@@ -1765,21 +1765,21 @@ pub struct ClickEvent {
 2. [x] Add on_copy/on_cut/on_paste handler slots on Element
 3. [x] Fire Copy/Cut/Paste events on Ctrl+C/X/V
 4. [x] Default clipboard behavior for text input elements
-5. Integrate wl_data_device::set_selection for setting clipboard
-6. Integrate wl_data_device::selection for reading clipboard
-7. Implement primary selection (zwp_primary_selection_device_v1) for middle-click paste
+5. Integrate wl_data_device::set_selection for setting clipboard -- deferred (needs VM)
+6. Integrate wl_data_device::selection for reading clipboard -- deferred (needs VM)
+7. Implement primary selection (zwp_primary_selection_device_v1) for middle-click paste -- deferred (needs VM)
 8. Tests: copy text, paste text, custom clipboard handlers
 
-### Phase 11: Touch Events
+### Phase 11: Touch Events -- DONE (shape/orientation stubbed)
 
 **Goal**: Native touch support beyond pointer coercion.
 
-1. Implement SCTK touch handler (delegate_touch)
-2. Coerce primary touch to pointer events (with implicit capture)
-3. Fire native TouchStart/Move/End/Cancel events for all touches
-4. Handle multi-touch (multiple pointer IDs)
-5. Store touch shape/orientation data
-6. Tests: single touch, multi-touch, touch cancel
+1. [x] Implement SCTK touch handler (delegate_touch) in wayland.rs
+2. [x] Coerce primary touch to pointer events (PointerMove + PointerDown/Up with MouseButton::Left)
+3. [x] Fire native TouchStart/Move/End/Cancel events for all touches via target+bubble dispatch
+4. [x] Handle multi-touch (active_touches HashMap, primary_touch_id tracking)
+5. [x] Store touch shape/orientation data -- stubbed in TouchHandler (TODO when needed)
+6. Tests: single touch, multi-touch, touch cancel -- deferred (needs VM for build)
 
 ### Phase 12: Hit Testing Enhancements -- DONE
 

@@ -5,6 +5,7 @@
 //! deepest element to root as pre-order indices into the element tree.
 
 use crate::element::Element;
+use crate::input::PointerEvents;
 use crate::layout::{LayoutNode, Rect};
 
 /// Result of a hit test -- the path from root to the deepest hit element.
@@ -38,6 +39,11 @@ fn hit_test_recursive(
     path: &mut Vec<usize>,
     index: usize,
 ) -> bool {
+    // pointer_events: None — skip this element and all children
+    if element.pointer_events == PointerEvents::None {
+        return false;
+    }
+
     // Check if point is inside this node's bounds
     if !bounds_contains(&node.bounds, x, y) {
         return false;
@@ -51,8 +57,16 @@ fn hit_test_recursive(
         ci += count_elements(child_element);
     }
 
-    // Check children in reverse order (last drawn = on top = checked first)
-    for i in (0..node.children.len()).rev() {
+    // Build child order: sort by z-index (descending) for hit testing
+    let mut child_order: Vec<usize> = (0..node.children.len()).collect();
+    child_order.sort_by(|a, b| {
+        let z_a = element.children.get(*a).and_then(|e| e.z_index).unwrap_or(0);
+        let z_b = element.children.get(*b).and_then(|e| e.z_index).unwrap_or(0);
+        z_b.cmp(&z_a).then_with(|| b.cmp(a)) // higher z-index first, then reverse order
+    });
+
+    // Check children in z-index-aware order
+    for i in child_order {
         if i < element.children.len() {
             if hit_test_recursive(
                 &node.children[i],
@@ -66,6 +80,11 @@ fn hit_test_recursive(
                 return true;
             }
         }
+    }
+
+    // pointer_events: PassThrough — skip self but children were already checked
+    if element.pointer_events == PointerEvents::PassThrough {
+        return false;
     }
 
     // No child matched -- check if this element itself is interactive
@@ -85,13 +104,42 @@ fn bounds_contains(bounds: &Rect, x: f32, y: f32) -> bool {
 }
 
 fn is_interactive(element: &Element) -> bool {
-    element.on_click.is_some()
+    // New event handlers
+    element.on_pointer_down.is_some()
+        || element.on_pointer_up.is_some()
+        || element.on_pointer_move.is_some()
+        || element.on_pointer_enter.is_some()
+        || element.on_pointer_leave.is_some()
+        || element.on_pointer_down_capture.is_some()
+        || element.on_pointer_up_capture.is_some()
+        || element.on_pointer_move_capture.is_some()
+        || element.on_click.is_some()
+        || element.on_double_click.is_some()
+        || element.on_context_menu.is_some()
+        || element.on_key_down.is_some()
+        || element.on_key_up.is_some()
+        || element.on_focus.is_some()
+        || element.on_blur.is_some()
+        || element.on_focus_in.is_some()
+        || element.on_focus_out.is_some()
+        || element.on_wheel.is_some()
+        || element.on_scroll_end.is_some()
+        // Text input
+        || element.on_before_input.is_some()
+        || element.on_input.is_some()
+        // Composition
+        || element.on_composition_start.is_some()
+        || element.on_composition_update.is_some()
+        || element.on_composition_end.is_some()
+        // Legacy handlers
         || element.on_hover.is_some()
         || element.on_drag.is_some()
         || element.on_scroll.is_some()
         || element.on_change.is_some()
+        // Other interactive properties
         || element.scroll_direction.is_some()
         || element.cursor.is_some()
+        || element.focusable == Some(true)
 }
 
 fn count_elements(element: &Element) -> usize {
@@ -106,7 +154,7 @@ fn count_elements(element: &Element) -> usize {
 mod tests {
     use super::*;
     use crate::element::*;
-    use crate::input::CursorStyle;
+    use crate::input::{CursorStyle, EventResult, PointerEvents};
     use crate::layout::compute_layout;
     use skia_safe::textlayout::FontCollection;
     use skia_safe::FontMgr;
@@ -126,7 +174,7 @@ mod tests {
                 container()
                     .width(50.0)
                     .height(50.0)
-                    .on_click(|| {}),
+                    .on_click(|_| EventResult::Stop),
             );
         let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let result = hit_test(&layout, &tree, 25.0, 25.0);
@@ -141,7 +189,7 @@ mod tests {
         let tree = container()
             .width(100.0)
             .height(100.0)
-            .on_click(|| {});
+            .on_click(|_| EventResult::Stop);
         let (layout, _) = compute_layout(&tree, 800.0, 600.0, &test_fc());
         let result = hit_test(&layout, &tree, 200.0, 200.0);
         assert!(result.is_none());

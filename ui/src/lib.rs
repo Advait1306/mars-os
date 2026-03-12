@@ -29,7 +29,7 @@ pub use input::{
     BeforeInputEvent, ClickEvent, ClipboardData, ClipboardEvent, CompositionEvent, CursorStyle,
     DragData, DragEvent, DropEffect, EventPhase, EventResult, FocusEvent, InputType, KeyCode,
     KeyValue, KeyboardEvent, Modifiers, MouseButton, PointerEvent, PointerEvents, PointerType,
-    ScrollEndEvent, ScrollSource, TextInputEvent, WheelEvent,
+    ScrollEndEvent, ScrollSource, TextInputEvent, TouchEvent, WheelEvent,
 };
 pub use animation::{Animation, Easing, From, To};
 

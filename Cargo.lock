@@ -1389,6 +1389,7 @@ dependencies = [
  "smithay-client-toolkit",
  "taffy",
  "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

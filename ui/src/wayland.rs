@@ -12,25 +12,36 @@ use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
-    delegate_seat, delegate_shm,
+    delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
+    delegate_registry, delegate_seat, delegate_shm, delegate_touch,
     output::{OutputHandler, OutputState},
     reexports::client::{
         globals::registry_queue_init,
-        protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+        protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_touch},
         Connection, QueueHandle,
     },
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
+        keyboard::{
+            KeyEvent, KeyboardHandler, Keysym,
+            Modifiers as SctkModifiers,
+        },
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
-        SeatHandler, SeatState,
+        touch::{TouchHandler},
+        Capability, SeatHandler, SeatState,
     },
     shell::wlr_layer::{
         LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
     },
     shell::WaylandSurface,
     shm::{slot::SlotPool, Shm, ShmHandler},
+};
+
+use wayland_client::protocol::wl_registry;
+use wayland_client::Dispatch;
+use wayland_protocols::wp::text_input::zv3::client::{
+    zwp_text_input_manager_v3, zwp_text_input_v3,
 };
 
 use crate::animator::{collect_keyed_elements, Animator};
@@ -94,9 +105,45 @@ struct WaylandState {
     event_state: EventState,
     last_layout: Option<LayoutNode>,
     last_element_tree: Option<Element>,
+
+    // Keyboard modifier state (updated by SCTK)
+    current_modifiers: crate::input::Modifiers,
+
+    // Text input (IME) via zwp_text_input_v3
+    text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
+    text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
+    /// Accumulated preedit from the pending text_input.done cycle.
+    pending_preedit: Option<(String, Option<i32>, Option<i32>)>,
+    /// Accumulated commit string from the pending text_input.done cycle.
+    pending_commit: Option<String>,
+    /// Whether the text input is currently enabled (active for the focused element).
+    text_input_enabled: bool,
 }
 
 impl WaylandState {
+    /// Enable or disable the zwp_text_input_v3 based on whether a text input element is focused.
+    fn sync_text_input_focus(&mut self) {
+        let should_enable = if let Some(ref elements) = self.last_element_tree {
+            self.event_state.focused_element_is_text_input(elements)
+        } else {
+            false
+        };
+
+        if should_enable && !self.text_input_enabled {
+            if let Some(ref ti) = self.text_input {
+                ti.enable();
+                ti.commit();
+            }
+            self.text_input_enabled = true;
+        } else if !should_enable && self.text_input_enabled {
+            if let Some(ref ti) = self.text_input {
+                ti.disable();
+                ti.commit();
+            }
+            self.text_input_enabled = false;
+        }
+    }
+
     /// Process any pending input events against the cached layout/element trees.
     fn process_input_events(&mut self) {
         if self.pending_events.is_empty() {
@@ -366,10 +413,23 @@ impl SeatHandler for WaylandState {
         _: &Connection,
         qh: &QueueHandle<Self>,
         seat: wl_seat::WlSeat,
-        capability: smithay_client_toolkit::seat::Capability,
+        capability: Capability,
     ) {
-        if capability == smithay_client_toolkit::seat::Capability::Pointer {
+        if capability == Capability::Pointer {
             self.seat_state.get_pointer(qh, &seat).ok();
+        }
+        if capability == Capability::Touch {
+            self.seat_state.get_touch(qh, &seat).ok();
+        }
+        if capability == Capability::Keyboard {
+            self.seat_state.get_keyboard(qh, &seat, None).ok();
+            // Create text input instance for IME support
+            if self.text_input.is_none() {
+                if let Some(ref manager) = self.text_input_manager {
+                    let ti = manager.get_text_input(&seat, qh, ());
+                    self.text_input = Some(ti);
+                }
+            }
         }
     }
 
@@ -410,11 +470,13 @@ impl PointerHandler for WaylandState {
                     x: event.position.0 as f32,
                     y: event.position.1 as f32,
                 }),
-                PointerEventKind::Press { button, .. } => {
+                PointerEventKind::Press { button, time, .. } => {
                     let mb = match button {
-                        272 => MouseButton::Left,   // BTN_LEFT
-                        273 => MouseButton::Right,  // BTN_RIGHT
-                        274 => MouseButton::Middle, // BTN_MIDDLE
+                        272 => MouseButton::Left,    // BTN_LEFT
+                        273 => MouseButton::Right,   // BTN_RIGHT
+                        274 => MouseButton::Middle,  // BTN_MIDDLE
+                        275 => MouseButton::Back,    // BTN_SIDE
+                        276 => MouseButton::Forward, // BTN_EXTRA
                         _ => MouseButton::Left,
                     };
                     Some(InputEvent::PointerButton {
@@ -422,13 +484,16 @@ impl PointerHandler for WaylandState {
                         y: event.position.1 as f32,
                         button: mb,
                         pressed: true,
+                        time,
                     })
                 }
-                PointerEventKind::Release { button, .. } => {
+                PointerEventKind::Release { button, time, .. } => {
                     let mb = match button {
                         272 => MouseButton::Left,
                         273 => MouseButton::Right,
                         274 => MouseButton::Middle,
+                        275 => MouseButton::Back,
+                        276 => MouseButton::Forward,
                         _ => MouseButton::Left,
                     };
                     Some(InputEvent::PointerButton {
@@ -436,24 +501,215 @@ impl PointerHandler for WaylandState {
                         y: event.position.1 as f32,
                         button: mb,
                         pressed: false,
+                        time,
                     })
                 }
                 PointerEventKind::Axis {
                     horizontal,
                     vertical,
-                    ..
-                } => Some(InputEvent::PointerScroll {
-                    x: event.position.0 as f32,
-                    y: event.position.1 as f32,
-                    delta_x: horizontal.absolute as f32,
-                    delta_y: vertical.absolute as f32,
-                }),
+                    source,
+                    time,
+                } => {
+                    use smithay_client_toolkit::reexports::client::protocol::wl_pointer::AxisSource;
+                    let scroll_source = source.map(|s| match s {
+                        AxisSource::Wheel => crate::input::ScrollSource::Wheel,
+                        AxisSource::Finger => crate::input::ScrollSource::Finger,
+                        AxisSource::Continuous => crate::input::ScrollSource::Continuous,
+                        AxisSource::WheelTilt => crate::input::ScrollSource::WheelTilt,
+                        _ => crate::input::ScrollSource::Wheel,
+                    });
+                    Some(InputEvent::PointerScroll {
+                        x: event.position.0 as f32,
+                        y: event.position.1 as f32,
+                        delta_x: horizontal.absolute as f32,
+                        delta_y: vertical.absolute as f32,
+                        source: scroll_source,
+                        discrete_x: horizontal.discrete,
+                        discrete_y: vertical.discrete,
+                        stop: horizontal.stop || vertical.stop,
+                        time,
+                    })
+                }
             };
 
             if let Some(input_event) = input {
                 self.pending_events.push(input_event);
             }
         }
+    }
+}
+
+impl KeyboardHandler for WaylandState {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+        _: &[u32],
+        _: &[Keysym],
+    ) {
+        // Surface gained keyboard focus
+    }
+
+    fn leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        // Surface lost keyboard focus
+    }
+
+    fn press_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
+    ) {
+        let modifiers = self.current_modifiers;
+        let key = crate::input::Key(event.keysym.raw());
+
+        // Queue KeyDown event
+        self.pending_events.push(InputEvent::KeyDown {
+            key,
+            modifiers,
+        });
+
+        // If the key produces text and we're not in an IME composition, queue a TextInput event.
+        // During IME composition, text comes through the zwp_text_input_v3 protocol instead.
+        if !self.event_state.is_composing {
+            if let Some(ref text) = event.utf8 {
+                if !text.is_empty() && !text.chars().any(|c| c.is_control()) {
+                    self.pending_events.push(InputEvent::TextInput {
+                        text: text.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    fn release_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        event: KeyEvent,
+    ) {
+        let modifiers = self.current_modifiers;
+        let key = crate::input::Key(event.keysym.raw());
+
+        self.pending_events.push(InputEvent::KeyUp {
+            key,
+            modifiers,
+        });
+    }
+
+    fn update_modifiers(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        modifiers: SctkModifiers,
+        _: u32,
+    ) {
+        self.current_modifiers = crate::input::Modifiers {
+            shift: modifiers.shift,
+            ctrl: modifiers.ctrl,
+            alt: modifiers.alt,
+            super_: modifiers.logo,
+            caps_lock: modifiers.caps_lock,
+            num_lock: modifiers.num_lock,
+        };
+    }
+}
+
+impl TouchHandler for WaylandState {
+    fn down(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_touch::WlTouch,
+        _serial: u32,
+        time: u32,
+        _surface: wl_surface::WlSurface,
+        id: i32,
+        position: (f64, f64),
+    ) {
+        self.pending_events.push(InputEvent::TouchDown {
+            id,
+            x: position.0 as f32,
+            y: position.1 as f32,
+            time,
+        });
+    }
+
+    fn up(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_touch::WlTouch,
+        _serial: u32,
+        time: u32,
+        id: i32,
+    ) {
+        self.pending_events.push(InputEvent::TouchUp { id, time });
+    }
+
+    fn motion(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_touch::WlTouch,
+        time: u32,
+        id: i32,
+        position: (f64, f64),
+    ) {
+        self.pending_events.push(InputEvent::TouchMotion {
+            id,
+            x: position.0 as f32,
+            y: position.1 as f32,
+            time,
+        });
+    }
+
+    fn cancel(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_touch::WlTouch,
+    ) {
+        self.pending_events.push(InputEvent::TouchCancel);
+    }
+
+    fn shape(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_touch::WlTouch,
+        _id: i32,
+        _major: f64,
+        _minor: f64,
+    ) {
+        // TODO: Store shape data for touch events
+    }
+
+    fn orientation(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_touch::WlTouch,
+        _id: i32,
+        _orientation: f64,
+    ) {
+        // TODO: Store orientation data for touch events
     }
 }
 
@@ -474,9 +730,105 @@ delegate_compositor!(WaylandState);
 delegate_output!(WaylandState);
 delegate_layer!(WaylandState);
 delegate_pointer!(WaylandState);
+delegate_keyboard!(WaylandState);
+delegate_touch!(WaylandState);
 delegate_registry!(WaylandState);
 delegate_seat!(WaylandState);
 delegate_shm!(WaylandState);
+
+// --- zwp_text_input_v3 handlers ---
+
+impl Dispatch<zwp_text_input_manager_v3::ZwpTextInputManagerV3, ()> for WaylandState {
+    fn event(
+        _: &mut Self,
+        _: &zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+        _: zwp_text_input_manager_v3::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // The manager has no events.
+    }
+}
+
+impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        _text_input: &zwp_text_input_v3::ZwpTextInputV3,
+        event: zwp_text_input_v3::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_text_input_v3::Event::PreeditString {
+                text,
+                cursor_begin,
+                cursor_end,
+            } => {
+                // Accumulate preedit — applied on Done
+                state.pending_preedit = text.map(|t| (t, Some(cursor_begin), Some(cursor_end)));
+            }
+
+            zwp_text_input_v3::Event::CommitString { text } => {
+                // Accumulate commit — applied on Done
+                state.pending_commit = text;
+            }
+
+            zwp_text_input_v3::Event::DeleteSurroundingText {
+                before_length: _,
+                after_length: _,
+            } => {
+                // TODO: Implement delete-surrounding-text support.
+                // This requires tracking the surrounding text and cursor position,
+                // which needs cooperation from the text input element state.
+            }
+
+            zwp_text_input_v3::Event::Done { serial: _ } => {
+                // The compositor signals that the current batch of updates is complete.
+                // Process accumulated preedit and commit.
+
+                let was_composing = state.event_state.is_composing;
+
+                if let Some(commit) = state.pending_commit.take() {
+                    // Commit string present — end any composition and emit text input
+                    if was_composing {
+                        state.pending_events.push(InputEvent::CompositionEnd {
+                            text: commit.clone(),
+                        });
+                    } else {
+                        // Direct commit without prior composition
+                        state.pending_events.push(InputEvent::TextInput { text: commit });
+                    }
+                    // Clear preedit since we committed
+                    state.pending_preedit = None;
+                } else if let Some((preedit_text, cursor_begin, cursor_end)) =
+                    state.pending_preedit.take()
+                {
+                    if !was_composing {
+                        // Start new composition
+                        state.pending_events.push(InputEvent::CompositionStart);
+                    }
+                    // Update composition with preedit
+                    let cb = cursor_begin.and_then(|v| if v >= 0 { Some(v as usize) } else { None });
+                    let ce = cursor_end.and_then(|v| if v >= 0 { Some(v as usize) } else { None });
+                    state.pending_events.push(InputEvent::CompositionUpdate {
+                        text: preedit_text,
+                        cursor_begin: cb,
+                        cursor_end: ce,
+                    });
+                } else if was_composing {
+                    // No preedit and no commit but we were composing — composition ended with empty
+                    state.pending_events.push(InputEvent::CompositionEnd {
+                        text: String::new(),
+                    });
+                }
+            }
+
+            _ => {}
+        }
+    }
+}
 
 // --- Public entry point ---
 
@@ -497,6 +849,10 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
     let layer_shell =
         LayerShell::bind(&wl_context.globals, &qh).expect("Layer shell not available");
     let shm = Shm::bind(&wl_context.globals, &qh).expect("SHM not available");
+
+    // Bind zwp_text_input_manager_v3 if available (not fatal if missing)
+    let text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3> =
+        wl_context.globals.bind(&qh, 1..=1, ()).ok();
 
     let (width, height, layer_surface) = match &config {
         SurfaceConfig::LayerShell {
@@ -606,6 +962,12 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         event_state: EventState::new(),
         last_layout: None,
         last_element_tree: None,
+        current_modifiers: crate::input::Modifiers::default(),
+        text_input_manager,
+        text_input: None,
+        pending_preedit: None,
+        pending_commit: None,
+        text_input_enabled: false,
     };
 
     let mut event_loop: EventLoop<WaylandState> =
@@ -623,6 +985,9 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
 
         // Process pending input events against the cached layout/element trees
         state.process_input_events();
+
+        // Sync text input protocol state with focus (enable/disable IME)
+        state.sync_text_input_focus();
 
         // Call View::tick() for custom event queue polling
         (state.view_state.tick_fn)();
