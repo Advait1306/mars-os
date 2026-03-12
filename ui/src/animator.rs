@@ -144,11 +144,14 @@ struct ElementAnim {
     /// True when this element has been removed from the tree and is playing
     /// its exit animation.
     exiting: bool,
+    /// Delay in milliseconds before property animations start stepping.
+    delay_remaining_ms: f32,
 }
 
 impl ElementAnim {
     fn is_settled(&self) -> bool {
-        self.opacity.as_ref().map_or(true, |a| a.is_settled())
+        self.delay_remaining_ms <= 0.0
+            && self.opacity.as_ref().map_or(true, |a| a.is_settled())
             && self.offset_x.as_ref().map_or(true, |a| a.is_settled())
             && self.offset_y.as_ref().map_or(true, |a| a.is_settled())
             && self.scale.as_ref().map_or(true, |a| a.is_settled())
@@ -159,6 +162,10 @@ impl ElementAnim {
     }
 
     fn step(&mut self, dt: f32) {
+        if self.delay_remaining_ms > 0.0 {
+            self.delay_remaining_ms -= dt * 1000.0;
+            return;
+        }
         if let Some(a) = &mut self.opacity {
             a.step(dt);
         }
@@ -285,6 +292,9 @@ impl Animator {
                     if let Some(v) = initial.scale {
                         anim.scale = Some(PropAnim::new(v, 1.0, &animation));
                     }
+                    if let Some(delay) = initial.delay_ms {
+                        anim.delay_remaining_ms = delay as f32;
+                    }
                 }
             }
 
@@ -340,6 +350,9 @@ impl Animator {
         let animation = exit.animation.as_ref().cloned().unwrap_or_default();
         let anim = self.elements.entry(key.to_string()).or_default();
         anim.exiting = true;
+        if let Some(delay) = exit.delay_ms {
+            anim.delay_remaining_ms = delay as f32;
+        }
 
         if let Some(target_opacity) = exit.opacity {
             let current = anim.opacity.as_ref().map(|a| a.value()).unwrap_or(1.0);

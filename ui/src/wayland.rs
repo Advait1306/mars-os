@@ -34,7 +34,7 @@ use smithay_client_toolkit::{
 };
 
 use crate::animator::{collect_keyed_elements, Animator};
-use crate::app::{SurfaceConfig, View};
+use crate::app::{SurfaceConfig, View, WaylandContext};
 use crate::display_list::build_display_list;
 use crate::element::Element;
 use crate::event_dispatch::EventState;
@@ -53,6 +53,8 @@ struct ViewState {
     apply_fn: Box<dyn Fn()>,
     /// Check if there are pending mutations in the Handle queue.
     has_mutations_fn: Box<dyn Fn() -> bool>,
+    /// Call View::tick() each frame before render.
+    tick_fn: Box<dyn Fn()>,
     /// The mutation queue as `Rc<dyn Any>`, passed to RenderContext so it can
     /// hand out typed `Handle<V>` via downcast.
     mutations_rc: Rc<dyn Any>,
@@ -121,6 +123,26 @@ impl WaylandState {
         // Clear dirty reactive state (mutations may have called Reactive::set)
         reactive::take_dirty();
 
+        // Render through the framework pipeline
+        let mut cx = RenderContext::new(
+            self.view_state.mutations_rc.clone(),
+            self.width,
+            self.height,
+        );
+        let element_tree = (self.view_state.render_fn)(&mut cx);
+
+        // Handle surface resize request from the view
+        if let Some((new_w, new_h)) = cx.take_requested_size() {
+            if new_w != self.width || new_h != self.height {
+                self.width = new_w;
+                self.height = new_h;
+                if let Some(ls) = &self.layer_surface {
+                    ls.set_size(new_w, new_h);
+                    ls.wl_surface().commit();
+                }
+            }
+        }
+
         let pool = match self.pool.as_mut() {
             Some(p) => p,
             None => return,
@@ -143,10 +165,6 @@ impl WaylandState {
                 wl_shm::Format::Argb8888,
             )
             .expect("Failed to create buffer");
-
-        // Render through the framework pipeline
-        let mut cx = RenderContext::new(self.view_state.mutations_rc.clone());
-        let element_tree = (self.view_state.render_fn)(&mut cx);
         let (layout_tree, _elements) = compute_layout(&element_tree, width as f32, height as f32);
 
         // Diff keyed elements for enter/exit/layout animations
@@ -468,10 +486,17 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         registry_queue_init::<WaylandState>(&conn).expect("Failed to init registry");
     let qh = event_queue.handle();
 
+    // Create WaylandContext for View::setup()
+    let wl_context = WaylandContext {
+        connection: conn.clone(),
+        globals,
+    };
+
     let compositor_state =
-        CompositorState::bind(&globals, &qh).expect("Compositor not available");
-    let layer_shell = LayerShell::bind(&globals, &qh).expect("Layer shell not available");
-    let shm = Shm::bind(&globals, &qh).expect("SHM not available");
+        CompositorState::bind(&wl_context.globals, &qh).expect("Compositor not available");
+    let layer_shell =
+        LayerShell::bind(&wl_context.globals, &qh).expect("Layer shell not available");
+    let shm = Shm::bind(&wl_context.globals, &qh).expect("SHM not available");
 
     let (width, height, layer_surface) = match &config {
         SurfaceConfig::LayerShell {
@@ -481,6 +506,7 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
             size,
             exclusive_zone,
             keyboard,
+            margin,
         } => {
             let surface = compositor_state.create_surface(&qh);
             let ls = layer_shell.create_layer_surface(
@@ -494,6 +520,7 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
             ls.set_size(size.0, size.1);
             ls.set_exclusive_zone(*exclusive_zone);
             ls.set_keyboard_interactivity(*keyboard);
+            ls.set_margin(margin.0, margin.1, margin.2, margin.3);
             ls.wl_surface().commit();
 
             (size.0, size.1, Some(ls))
@@ -513,6 +540,10 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
     // Create the mutation queue and type-erased view state.
     // The view is stored in Rc<RefCell<V>> so closures can borrow it.
     let view = Rc::new(RefCell::new(view));
+
+    // Call View::setup() with Wayland context before the event loop
+    view.borrow_mut().setup(&wl_context);
+
     let mutations: Rc<MutationQueue<V>> = MutationQueue::new();
 
     let view_for_render = Rc::clone(&view);
@@ -537,19 +568,25 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         !mutations_for_check.is_empty()
     });
 
+    let view_for_tick = Rc::clone(&view);
+    let tick_fn = Box::new(move || {
+        view_for_tick.borrow_mut().tick();
+    });
+
     let mutations_rc: Rc<dyn Any> = mutations;
 
     let view_state = ViewState {
         render_fn,
         apply_fn,
         has_mutations_fn,
+        tick_fn,
         mutations_rc,
     };
 
     let mut state = WaylandState {
-        registry_state: RegistryState::new(&globals),
-        seat_state: SeatState::new(&globals, &qh),
-        output_state: OutputState::new(&globals, &qh),
+        registry_state: RegistryState::new(&wl_context.globals),
+        seat_state: SeatState::new(&wl_context.globals, &qh),
+        output_state: OutputState::new(&wl_context.globals, &qh),
         compositor_state,
         shm,
         layer_shell,
@@ -586,6 +623,9 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
 
         // Process pending input events against the cached layout/element trees
         state.process_input_events();
+
+        // Call View::tick() for custom event queue polling
+        (state.view_state.tick_fn)();
 
         // Step animations
         let now = Instant::now();

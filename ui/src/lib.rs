@@ -21,7 +21,7 @@ pub use color::*;
 pub use element::*;
 pub use style::*;
 pub use display_list::Point;
-pub use app::{SurfaceConfig, View};
+pub use app::{SurfaceConfig, View, WaylandContext};
 pub use reactive::{Reactive, RenderContext};
 pub use handle::Handle;
 pub use input::CursorStyle;

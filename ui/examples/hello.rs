@@ -25,6 +25,7 @@ fn main() {
             exclusive_zone: 0,
             keyboard:
                 smithay_client_toolkit::shell::wlr_layer::KeyboardInteractivity::None,
+            margin: (0, 0, 0, 0),
         },
     );
 }

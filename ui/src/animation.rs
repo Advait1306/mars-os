@@ -106,6 +106,7 @@ pub struct From {
     pub offset_y: Option<f32>,
     pub scale: Option<f32>,
     pub animation: Option<Animation>,
+    pub delay_ms: Option<u32>,
 }
 
 impl From {
@@ -132,6 +133,10 @@ impl From {
         self.animation = Some(a);
         self
     }
+    pub fn delay_ms(mut self, ms: u32) -> Self {
+        self.delay_ms = Some(ms);
+        self
+    }
 }
 
 /// Describes the final state for an exit animation.
@@ -145,6 +150,7 @@ pub struct To {
     pub offset_y: Option<f32>,
     pub scale: Option<f32>,
     pub animation: Option<Animation>,
+    pub delay_ms: Option<u32>,
 }
 
 impl To {
@@ -169,6 +175,10 @@ impl To {
     }
     pub fn animation(mut self, a: Animation) -> Self {
         self.animation = Some(a);
+        self
+    }
+    pub fn delay_ms(mut self, ms: u32) -> Self {
+        self.delay_ms = Some(ms);
         self
     }
 }

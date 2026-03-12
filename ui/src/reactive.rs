@@ -87,11 +87,36 @@ pub fn is_dirty() -> bool {
 /// Render context passed to `View::render()` for dependency tracking and handle access.
 pub struct RenderContext {
     mutations_any: Rc<dyn Any>,
+    surface_width: u32,
+    surface_height: u32,
+    requested_size: Option<(u32, u32)>,
 }
 
 impl RenderContext {
-    pub fn new(mutations_any: Rc<dyn Any>) -> Self {
-        Self { mutations_any }
+    pub fn new(mutations_any: Rc<dyn Any>, surface_width: u32, surface_height: u32) -> Self {
+        Self {
+            mutations_any,
+            surface_width,
+            surface_height,
+            requested_size: None,
+        }
+    }
+
+    /// Current surface dimensions.
+    pub fn surface_size(&self) -> (u32, u32) {
+        (self.surface_width, self.surface_height)
+    }
+
+    /// Request the surface be resized. Takes effect next frame.
+    pub fn set_surface_size(&mut self, width: u32, height: u32) {
+        self.surface_width = width;
+        self.surface_height = height;
+        self.requested_size = Some((width, height));
+    }
+
+    /// Take the requested surface size, if any was set during render.
+    pub fn take_requested_size(&mut self) -> Option<(u32, u32)> {
+        self.requested_size.take()
     }
 
     /// Record that the current render depends on this reactive field.
