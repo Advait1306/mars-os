@@ -9,6 +9,7 @@ pub enum ElementKind {
     Divider { thickness: f32 },
 }
 
+#[derive(Debug, Clone)]
 pub enum ImageSource {
     Svg(String),
     File(String),
