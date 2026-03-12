@@ -3,6 +3,9 @@
 //! Connects to a Wayland compositor, creates a layer-shell surface (or toplevel),
 //! and runs the render pipeline: View::render() -> layout -> display_list -> SkiaRenderer -> SHM buffer.
 
+use std::any::Any;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use calloop::EventLoop;
@@ -29,8 +32,25 @@ use smithay_client_toolkit::{
 
 use crate::app::{SurfaceConfig, View};
 use crate::display_list::build_display_list;
+use crate::element::Element;
+use crate::handle::MutationQueue;
 use crate::layout::compute_layout;
+use crate::reactive::{self, RenderContext};
 use crate::renderer::SkiaRenderer;
+
+/// Type-erased view operations, constructed once in `run_wayland` with closures
+/// that capture the concrete view type `V`.
+struct ViewState {
+    /// Render the view, producing an element tree.
+    render_fn: Box<dyn Fn(&mut RenderContext) -> Element>,
+    /// Apply all pending mutations from the Handle queue to the view.
+    apply_fn: Box<dyn Fn()>,
+    /// Check if there are pending mutations in the Handle queue.
+    has_mutations_fn: Box<dyn Fn() -> bool>,
+    /// The mutation queue as `Rc<dyn Any>`, passed to RenderContext so it can
+    /// hand out typed `Handle<V>` via downcast.
+    mutations_rc: Rc<dyn Any>,
+}
 
 struct WaylandState {
     // SCTK state
@@ -54,7 +74,7 @@ struct WaylandState {
     exit: bool,
 
     // Framework
-    view: Box<dyn View>,
+    view_state: ViewState,
     renderer: SkiaRenderer,
 }
 
@@ -63,6 +83,12 @@ impl WaylandState {
         if !self.configured || !self.needs_redraw {
             return;
         }
+
+        // Apply any pending mutations from Handle::update() calls
+        (self.view_state.apply_fn)();
+
+        // Clear dirty reactive state (mutations may have called Reactive::set)
+        reactive::take_dirty();
 
         let pool = match self.pool.as_mut() {
             Some(p) => p,
@@ -88,7 +114,8 @@ impl WaylandState {
             .expect("Failed to create buffer");
 
         // Render through the framework pipeline
-        let element_tree = self.view.render();
+        let mut cx = RenderContext::new(self.view_state.mutations_rc.clone());
+        let element_tree = (self.view_state.render_fn)(&mut cx);
         let (layout_tree, _elements) = compute_layout(&element_tree, width as f32, height as f32);
         let commands = build_display_list(&layout_tree, &element_tree);
 
@@ -304,7 +331,7 @@ delegate_shm!(WaylandState);
 
 // --- Public entry point ---
 
-pub fn run_wayland(view: Box<dyn View>, config: SurfaceConfig) {
+pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
     let conn = Connection::connect_to_env().expect("Failed to connect to Wayland");
     let (globals, event_queue) =
         registry_queue_init::<WaylandState>(&conn).expect("Failed to init registry");
@@ -352,6 +379,42 @@ pub fn run_wayland(view: Box<dyn View>, config: SurfaceConfig) {
     )
     .expect("Failed to create SHM pool");
 
+    // Create the mutation queue and type-erased view state.
+    // The view is stored in Rc<RefCell<V>> so closures can borrow it.
+    let view = Rc::new(RefCell::new(view));
+    let mutations: Rc<MutationQueue<V>> = MutationQueue::new();
+
+    let view_for_render = Rc::clone(&view);
+    let render_fn = Box::new(move |cx: &mut RenderContext| -> Element {
+        view_for_render.borrow().render(cx)
+    });
+
+    let view_for_mutate = Rc::clone(&view);
+    let mutations_for_apply = Rc::clone(&mutations);
+    let apply_fn = Box::new(move || {
+        let muts = mutations_for_apply.drain();
+        if !muts.is_empty() {
+            let mut v = view_for_mutate.borrow_mut();
+            for f in muts {
+                f(&mut *v);
+            }
+        }
+    });
+
+    let mutations_for_check = Rc::clone(&mutations);
+    let has_mutations_fn = Box::new(move || -> bool {
+        !mutations_for_check.is_empty()
+    });
+
+    let mutations_rc: Rc<dyn Any> = mutations;
+
+    let view_state = ViewState {
+        render_fn,
+        apply_fn,
+        has_mutations_fn,
+        mutations_rc,
+    };
+
     let mut state = WaylandState {
         registry_state: RegistryState::new(&globals),
         seat_state: SeatState::new(&globals, &qh),
@@ -367,7 +430,7 @@ pub fn run_wayland(view: Box<dyn View>, config: SurfaceConfig) {
         configured: false,
         needs_redraw: true,
         exit: false,
-        view,
+        view_state,
         renderer: SkiaRenderer::new(),
     };
 
@@ -383,6 +446,12 @@ pub fn run_wayland(view: Box<dyn View>, config: SurfaceConfig) {
         if state.exit {
             break;
         }
+
+        // Check for pending mutations or dirty reactive state and trigger redraw
+        if (state.view_state.has_mutations_fn)() || reactive::is_dirty() {
+            state.needs_redraw = true;
+        }
+
         state.draw();
         event_loop
             .dispatch(Duration::from_millis(16), &mut state)

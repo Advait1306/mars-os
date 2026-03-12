@@ -5,6 +5,8 @@ pub mod layout;
 pub mod display_list;
 pub mod renderer;
 pub mod app;
+pub mod reactive;
+pub mod handle;
 pub mod wayland;
 
 pub use color::*;
@@ -12,8 +14,10 @@ pub use element::*;
 pub use style::*;
 pub use display_list::Point;
 pub use app::{SurfaceConfig, View};
+pub use reactive::{Reactive, RenderContext};
+pub use handle::Handle;
 
 /// Run a view as a Wayland application.
-pub fn run(view: impl View, config: SurfaceConfig) {
-    wayland::run_wayland(Box::new(view), config);
+pub fn run<V: View>(view: V, config: SurfaceConfig) {
+    wayland::run_wayland(view, config);
 }

@@ -16,8 +16,10 @@ pub enum SurfaceConfig {
     },
 }
 
-/// The View trait — implementors describe UI as an element tree.
-/// For Phase 3, this is a simple trait without RenderContext (that comes in Phase 4).
+/// The View trait -- implementors describe UI as an element tree.
+///
+/// The `RenderContext` parameter enables dependency tracking (reading `Reactive<T>` values)
+/// and provides `cx.handle::<Self>()` for queueing mutations from closures.
 pub trait View: 'static {
-    fn render(&self) -> crate::element::Element;
+    fn render(&self, cx: &mut crate::reactive::RenderContext) -> crate::element::Element;
 }

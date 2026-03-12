@@ -3,7 +3,7 @@ use ui::*;
 struct HelloView;
 
 impl View for HelloView {
-    fn render(&self) -> Element {
+    fn render(&self, _cx: &mut RenderContext) -> Element {
         container()
             .background(rgba(30, 30, 30, 220))
             .rounded(12.0)
