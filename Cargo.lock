@@ -1384,11 +1384,16 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
+ "calloop 0.14.4",
+ "calloop-wayland-source 0.4.1",
+ "env_logger",
  "image",
  "log",
  "resvg",
  "skia-safe",
+ "smithay-client-toolkit",
  "taffy",
+ "wayland-client",
 ]
 
 [[package]]

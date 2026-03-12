@@ -1,0 +1,391 @@
+//! Wayland bootstrap and event loop for the UI framework.
+//!
+//! Connects to a Wayland compositor, creates a layer-shell surface (or toplevel),
+//! and runs the render pipeline: View::render() -> layout -> display_list -> SkiaRenderer -> SHM buffer.
+
+use std::time::Duration;
+
+use calloop::EventLoop;
+use calloop_wayland_source::WaylandSource;
+use smithay_client_toolkit::{
+    compositor::{CompositorHandler, CompositorState},
+    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_seat,
+    delegate_shm,
+    output::{OutputHandler, OutputState},
+    reexports::client::{
+        globals::registry_queue_init,
+        protocol::{wl_output, wl_seat, wl_shm, wl_surface},
+        Connection, QueueHandle,
+    },
+    registry::{ProvidesRegistryState, RegistryState},
+    registry_handlers,
+    seat::{SeatHandler, SeatState},
+    shell::wlr_layer::{
+        LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
+    },
+    shell::WaylandSurface,
+    shm::{slot::SlotPool, Shm, ShmHandler},
+};
+
+use crate::app::{SurfaceConfig, View};
+use crate::display_list::build_display_list;
+use crate::layout::compute_layout;
+use crate::renderer::SkiaRenderer;
+
+struct WaylandState {
+    // SCTK state
+    registry_state: RegistryState,
+    seat_state: SeatState,
+    output_state: OutputState,
+    compositor_state: CompositorState,
+    shm: Shm,
+    #[allow(dead_code)]
+    layer_shell: LayerShell,
+
+    // Surface
+    layer_surface: Option<LayerSurface>,
+    pool: Option<SlotPool>,
+    width: u32,
+    height: u32,
+    #[allow(dead_code)]
+    scale_factor: i32,
+    configured: bool,
+    needs_redraw: bool,
+    exit: bool,
+
+    // Framework
+    view: Box<dyn View>,
+    renderer: SkiaRenderer,
+}
+
+impl WaylandState {
+    fn draw(&mut self) {
+        if !self.configured || !self.needs_redraw {
+            return;
+        }
+
+        let pool = match self.pool.as_mut() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let width = self.width;
+        let height = self.height;
+        let stride = width as i32 * 4;
+        let buf_size = (stride * height as i32) as usize;
+
+        if pool.len() < buf_size {
+            pool.resize(buf_size).expect("Failed to resize pool");
+        }
+
+        let (buffer, canvas_data) = pool
+            .create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Argb8888,
+            )
+            .expect("Failed to create buffer");
+
+        // Render through the framework pipeline
+        let element_tree = self.view.render();
+        let (layout_tree, _elements) = compute_layout(&element_tree, width as f32, height as f32);
+        let commands = build_display_list(&layout_tree, &element_tree);
+
+        // Create a Skia raster surface and render
+        // Skia N32 premul on little-endian = BGRA = Wayland ARGB8888
+        let mut surface =
+            skia_safe::surfaces::raster_n32_premul((width as i32, height as i32))
+                .expect("Failed to create Skia surface");
+
+        {
+            let skia_canvas = surface.canvas();
+            skia_canvas.clear(skia_safe::Color::TRANSPARENT);
+            self.renderer.execute(skia_canvas, &commands);
+        }
+
+        // Read pixels from Skia surface into the SHM buffer
+        let image_info = surface.image_info();
+        let row_bytes = width as usize * 4;
+        surface.read_pixels(
+            &image_info,
+            canvas_data,
+            row_bytes,
+            (0, 0),
+        );
+
+        if let Some(ls) = &self.layer_surface {
+            let wl_surface = ls.wl_surface();
+            wl_surface.attach(Some(buffer.wl_buffer()), 0, 0);
+            wl_surface.damage_buffer(0, 0, width as i32, height as i32);
+            wl_surface.commit();
+        }
+
+        self.needs_redraw = false;
+    }
+}
+
+// --- Smithay handler implementations ---
+
+impl CompositorHandler for WaylandState {
+    fn scale_factor_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: i32,
+    ) {
+        self.needs_redraw = true;
+    }
+
+    fn transform_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: wl_output::Transform,
+    ) {
+    }
+
+    fn frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        if self.needs_redraw {
+            self.draw();
+        }
+    }
+
+    fn surface_enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
+
+    fn surface_leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
+}
+
+impl OutputHandler for WaylandState {
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.output_state
+    }
+
+    fn new_output(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_output::WlOutput,
+    ) {
+    }
+
+    fn update_output(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_output::WlOutput,
+    ) {
+    }
+
+    fn output_destroyed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_output::WlOutput,
+    ) {
+    }
+}
+
+impl LayerShellHandler for WaylandState {
+    fn closed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &LayerSurface,
+    ) {
+        self.exit = true;
+    }
+
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &LayerSurface,
+        configure: LayerSurfaceConfigure,
+        _: u32,
+    ) {
+        self.width = if configure.new_size.0 > 0 {
+            configure.new_size.0
+        } else {
+            self.width
+        };
+        self.height = if configure.new_size.1 > 0 {
+            configure.new_size.1
+        } else {
+            self.height
+        };
+        self.configured = true;
+        self.needs_redraw = true;
+        self.draw();
+    }
+}
+
+impl SeatHandler for WaylandState {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+
+    fn new_seat(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_seat::WlSeat,
+    ) {
+    }
+
+    fn new_capability(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_seat::WlSeat,
+        _: smithay_client_toolkit::seat::Capability,
+    ) {
+    }
+
+    fn remove_capability(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_seat::WlSeat,
+        _: smithay_client_toolkit::seat::Capability,
+    ) {
+    }
+
+    fn remove_seat(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_seat::WlSeat,
+    ) {
+    }
+}
+
+impl ShmHandler for WaylandState {
+    fn shm_state(&mut self) -> &mut Shm {
+        &mut self.shm
+    }
+}
+
+impl ProvidesRegistryState for WaylandState {
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry_state
+    }
+    registry_handlers![OutputState, SeatState];
+}
+
+delegate_compositor!(WaylandState);
+delegate_output!(WaylandState);
+delegate_layer!(WaylandState);
+delegate_registry!(WaylandState);
+delegate_seat!(WaylandState);
+delegate_shm!(WaylandState);
+
+// --- Public entry point ---
+
+pub fn run_wayland(view: Box<dyn View>, config: SurfaceConfig) {
+    let conn = Connection::connect_to_env().expect("Failed to connect to Wayland");
+    let (globals, event_queue) =
+        registry_queue_init::<WaylandState>(&conn).expect("Failed to init registry");
+    let qh = event_queue.handle();
+
+    let compositor_state =
+        CompositorState::bind(&globals, &qh).expect("Compositor not available");
+    let layer_shell = LayerShell::bind(&globals, &qh).expect("Layer shell not available");
+    let shm = Shm::bind(&globals, &qh).expect("SHM not available");
+
+    let (width, height, layer_surface) = match &config {
+        SurfaceConfig::LayerShell {
+            namespace,
+            layer,
+            anchor,
+            size,
+            exclusive_zone,
+            keyboard,
+        } => {
+            let surface = compositor_state.create_surface(&qh);
+            let ls = layer_shell.create_layer_surface(
+                &qh,
+                surface,
+                *layer,
+                Some(namespace.as_str()),
+                None,
+            );
+            ls.set_anchor(*anchor);
+            ls.set_size(size.0, size.1);
+            ls.set_exclusive_zone(*exclusive_zone);
+            ls.set_keyboard_interactivity(*keyboard);
+            ls.wl_surface().commit();
+
+            (size.0, size.1, Some(ls))
+        }
+        SurfaceConfig::Toplevel { .. } => {
+            // TODO: xdg_toplevel support in future phase
+            panic!("Toplevel not yet supported");
+        }
+    };
+
+    let pool = SlotPool::new(
+        (width as usize * height as usize * 4).max(4096),
+        &shm,
+    )
+    .expect("Failed to create SHM pool");
+
+    let mut state = WaylandState {
+        registry_state: RegistryState::new(&globals),
+        seat_state: SeatState::new(&globals, &qh),
+        output_state: OutputState::new(&globals, &qh),
+        compositor_state,
+        shm,
+        layer_shell,
+        layer_surface,
+        pool: Some(pool),
+        width,
+        height,
+        scale_factor: 1,
+        configured: false,
+        needs_redraw: true,
+        exit: false,
+        view,
+        renderer: SkiaRenderer::new(),
+    };
+
+    let mut event_loop: EventLoop<WaylandState> =
+        EventLoop::try_new().expect("Failed to create event loop");
+    let loop_handle = event_loop.handle();
+
+    WaylandSource::new(conn, event_queue)
+        .insert(loop_handle)
+        .expect("Failed to insert Wayland source");
+
+    loop {
+        if state.exit {
+            break;
+        }
+        state.draw();
+        event_loop
+            .dispatch(Duration::from_millis(16), &mut state)
+            .expect("Event loop dispatch failed");
+    }
+}

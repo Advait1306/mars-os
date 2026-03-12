@@ -9,3 +9,8 @@ skia-safe = { version = "0.82", features = ["textlayout"] }
 resvg = "0.44"
 image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
+smithay-client-toolkit = { version = "0.19", features = ["calloop"] }
+wayland-client = "0.31"
+calloop = "0.14"
+calloop-wayland-source = "0.4"
+env_logger = "0.11"
