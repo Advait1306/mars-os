@@ -1,3 +1,4 @@
+use crate::animation::{Animation, From, To};
 use crate::color::Color;
 use crate::input::CursorStyle;
 use crate::style::{Alignment, Border, Direction, Justify};
@@ -44,6 +45,13 @@ pub struct Element {
     pub font_size: f32,
     pub color: Option<Color>,
 
+    // Animation
+    pub animate: Option<Animation>,
+    pub animate_layout: bool,
+    pub layout_animation: Option<Animation>,
+    pub initial: Option<From>,
+    pub exit: Option<To>,
+
     // Event handlers
     pub on_click: Option<Box<dyn Fn()>>,
     pub on_hover: Option<Box<dyn Fn(bool)>>,
@@ -75,6 +83,11 @@ impl Default for Element {
             clip: false,
             font_size: 14.0,
             color: None,
+            animate: None,
+            animate_layout: false,
+            layout_animation: None,
+            initial: None,
+            exit: None,
             on_click: None,
             on_hover: None,
             on_drag: None,
@@ -275,6 +288,29 @@ impl Element {
     }
     pub fn cursor(mut self, style: CursorStyle) -> Self {
         self.cursor = Some(style);
+        self
+    }
+
+    // Animation
+    pub fn animate(mut self, animation: Animation) -> Self {
+        self.animate = Some(animation);
+        self
+    }
+    pub fn animate_layout(mut self) -> Self {
+        self.animate_layout = true;
+        self
+    }
+    pub fn animate_layout_with(mut self, animation: Animation) -> Self {
+        self.animate_layout = true;
+        self.layout_animation = Some(animation);
+        self
+    }
+    pub fn initial(mut self, from: From) -> Self {
+        self.initial = Some(from);
+        self
+    }
+    pub fn exit(mut self, to: To) -> Self {
+        self.exit = Some(to);
         self
     }
 }

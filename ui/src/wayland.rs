@@ -6,7 +6,7 @@
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
@@ -33,6 +33,7 @@ use smithay_client_toolkit::{
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
 
+use crate::animator::{collect_keyed_elements, Animator};
 use crate::app::{SurfaceConfig, View};
 use crate::display_list::build_display_list;
 use crate::element::Element;
@@ -81,6 +82,10 @@ struct WaylandState {
     // Framework
     view_state: ViewState,
     renderer: SkiaRenderer,
+
+    // Animation
+    animator: Animator,
+    last_tick: Instant,
 
     // Input / event dispatch
     pending_events: Vec<InputEvent>,
@@ -143,7 +148,33 @@ impl WaylandState {
         let mut cx = RenderContext::new(self.view_state.mutations_rc.clone());
         let element_tree = (self.view_state.render_fn)(&mut cx);
         let (layout_tree, _elements) = compute_layout(&element_tree, width as f32, height as f32);
-        let commands = build_display_list(&layout_tree, &element_tree);
+
+        // Diff keyed elements for enter/exit/layout animations
+        let (keyed_infos, keyed_bounds) =
+            collect_keyed_elements(&element_tree, &layout_tree);
+
+        // Detect exits: keys that were in prev_bounds but are no longer present.
+        // We need to start exit animations before diff_and_update clears them.
+        if let Some(ref prev_tree) = self.last_element_tree {
+            let prev_layout = self.last_layout.as_ref();
+            if let Some(prev_layout) = prev_layout {
+                let (prev_infos, prev_bounds) =
+                    collect_keyed_elements(prev_tree, prev_layout);
+                for (key, info) in &prev_infos {
+                    if !keyed_infos.contains_key(key) {
+                        if let Some(ref exit) = info.exit {
+                            if let Some(bounds) = prev_bounds.get(key) {
+                                self.animator.start_exit(key, exit, bounds);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.animator.diff_and_update(&keyed_infos, &keyed_bounds);
+
+        let commands = build_display_list(&layout_tree, &element_tree, Some(&self.animator));
 
         // Create a Skia raster surface and render
         // Skia N32 premul on little-endian = BGRA = Wayland ARGB8888
@@ -532,6 +563,8 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         exit: false,
         view_state,
         renderer: SkiaRenderer::new(),
+        animator: Animator::new(),
+        last_tick: Instant::now(),
         pending_events: Vec::new(),
         event_state: EventState::new(),
         last_layout: None,
@@ -553,6 +586,14 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
 
         // Process pending input events against the cached layout/element trees
         state.process_input_events();
+
+        // Step animations
+        let now = Instant::now();
+        let dt = now.duration_since(state.last_tick).as_secs_f32();
+        state.last_tick = now;
+        if state.animator.step(dt) {
+            state.needs_redraw = true;
+        }
 
         // Check for pending mutations or dirty reactive state and trigger redraw
         if (state.view_state.has_mutations_fn)() || reactive::is_dirty() {

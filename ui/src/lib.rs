@@ -10,6 +10,9 @@ pub mod handle;
 pub mod input;
 pub mod hit_test;
 pub mod event_dispatch;
+pub mod spring;
+pub mod animation;
+pub mod animator;
 pub mod wayland;
 
 pub use color::*;
@@ -20,6 +23,7 @@ pub use app::{SurfaceConfig, View};
 pub use reactive::{Reactive, RenderContext};
 pub use handle::Handle;
 pub use input::CursorStyle;
+pub use animation::{Animation, Easing, From, To};
 
 /// Run a view as a Wayland application.
 pub fn run<V: View>(view: V, config: SurfaceConfig) {
