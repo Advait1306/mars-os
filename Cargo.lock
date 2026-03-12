@@ -312,11 +312,11 @@ dependencies = [
  "calloop 0.14.4",
  "calloop-wayland-source 0.4.1",
  "env_logger",
- "image",
  "log",
  "resvg",
+ "skia-safe",
  "smithay-client-toolkit",
- "tiny-skia",
+ "ui",
  "wayland-client",
  "wayland-protocols-plasma",
 ]

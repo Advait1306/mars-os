@@ -1,5 +1,9 @@
 //! Wayland layer-shell dock surface using smithay-client-toolkit
 //! with KDE plasma window management protocol for real-time window tracking.
+//!
+//! Rendering uses the ui framework's pipeline (Element -> Layout -> DisplayList -> SkiaRenderer)
+//! for the dock background, while icons are rendered directly via Skia since their positions
+//! are controlled by per-icon spring animations.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -26,24 +30,46 @@ use smithay_client_toolkit::{
     shell::WaylandSurface,
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
-use tiny_skia::Pixmap;
 use wayland_protocols_plasma::plasma_window_management::client::{
     org_kde_plasma_window, org_kde_plasma_window_management,
 };
 
-use crate::animation::Spring;
-use crate::render::{self, RenderSlot};
+use ui::color::rgba;
+use ui::display_list::build_display_list;
+use ui::element::*;
+use ui::layout::compute_layout;
+use ui::renderer::SkiaRenderer;
+use ui::spring::{SpringConfig, SpringState};
+use ui::style::*;
+
+use crate::icons;
 use crate::windows::{self, WindowTracker};
+
+const ICON_SIZE: f32 = 44.0;
+const ICON_PADDING: f32 = 8.0;
+const DOCK_PADDING: f32 = 12.0;
+const DOCK_HEIGHT: u32 = 64;
+const DOCK_RADIUS: f32 = 18.0;
+
+/// Calculate the dock width based on number of apps
+fn dock_width(app_count: usize) -> u32 {
+    if app_count == 0 {
+        return 200; // minimum width for empty state
+    }
+    let icons_width = app_count as u32 * ICON_SIZE as u32
+        + (app_count.saturating_sub(1)) as u32 * ICON_PADDING as u32;
+    icons_width + DOCK_PADDING as u32 * 2
+}
 
 /// An icon slot in the dock, tracking its animation state
 struct AnimSlot {
     app_id: String,
     app: windows::DockApp,
-    icon: Option<Pixmap>,
+    icon: Option<skia_safe::Image>,
     /// Spring controlling vertical offset: 0 = resting position, DOCK_HEIGHT = fully hidden below
-    y_spring: Spring,
+    y_spring: SpringState,
     /// Spring controlling horizontal offset from the surface center (left edge of icon)
-    x_spring: Spring,
+    x_spring: SpringState,
     /// True while waiting for resize phase to complete before sliding in
     entering: bool,
     /// True while sliding down before removal
@@ -72,11 +98,15 @@ pub struct Dock {
 
     // Animation state
     anim_slots: Vec<AnimSlot>,
-    width_spring: Spring,
+    width_spring: SpringState,
+    spring_config: SpringConfig,
     last_tick: Instant,
     animating: bool,
     /// True while resize phase is in progress and entering icons are waiting
     pending_entries: bool,
+
+    // UI framework rendering
+    renderer: SkiaRenderer,
 }
 
 impl AsMut<WindowTracker> for Dock {
@@ -102,8 +132,8 @@ impl Dock {
             .bind(&qh, 1..=16, ())
             .expect("org_kde_plasma_window_management not available");
 
-        let width = render::dock_width(0);
-        let height = render::dock_height();
+        let width = dock_width(0);
+        let height = DOCK_HEIGHT;
 
         // Create surface
         let surface = compositor_state.create_surface(&qh);
@@ -137,10 +167,12 @@ impl Dock {
             exit: false,
             window_tracker: WindowTracker::new(),
             anim_slots: Vec::new(),
-            width_spring: Spring::new(width as f32),
+            width_spring: SpringState::new(width as f32),
+            spring_config: SpringConfig::default(),
             last_tick: Instant::now(),
             animating: false,
             pending_entries: false,
+            renderer: SkiaRenderer::new(),
         };
 
         let mut event_loop: EventLoop<Dock> =
@@ -188,9 +220,9 @@ impl Dock {
         let new_apps = self.window_tracker.get_dock_apps();
         log::debug!("Dock: {} apps", new_apps.len());
 
-        let new_icons: Vec<Option<Pixmap>> = new_apps
+        let new_icons: Vec<Option<skia_safe::Image>> = new_apps
             .iter()
-            .map(|app| render::load_icon(&app.icon_name))
+            .map(|app| icons::load_icon(&app.icon_name))
             .collect();
 
         let new_ids: HashSet<String> = new_apps.iter().map(|a| a.app_id.clone()).collect();
@@ -243,13 +275,13 @@ impl Dock {
                 // Always start hidden below dock and slide up.
                 // If had_visible, entering=true delays slide-up until resize settles.
                 // If first icon, entering=false so y animates immediately with width.
-                let mut y_spring = Spring::new(render::DOCK_HEIGHT as f32);
+                let mut y_spring = SpringState::new(DOCK_HEIGHT as f32);
                 if had_visible {
-                    y_spring.set_target(render::DOCK_HEIGHT as f32);
+                    y_spring.set_target(DOCK_HEIGHT as f32);
                 } else {
                     y_spring.set_target(0.0);
                 }
-                let x_spring = Spring::new(0.0);
+                let x_spring = SpringState::new(0.0);
                 self.anim_slots.push(AnimSlot {
                     app_id: app.app_id.clone(),
                     app,
@@ -277,7 +309,7 @@ impl Dock {
         }
 
         // Width = dock_width for ALL current slots (leaving ones still hold space)
-        let target_width = render::dock_width(self.anim_slots.len()) as f32;
+        let target_width = dock_width(self.anim_slots.len()) as f32;
         self.width_spring.set_target(target_width);
 
         // Jump surface to target width immediately. The dock is BOTTOM-anchored
@@ -302,9 +334,8 @@ impl Dock {
     /// If `snap` is true, springs are settled immediately (first appearance).
     fn recompute_x_targets(&mut self, snap: bool) {
         let n = self.anim_slots.len();
-        let total_w = n as f32 * render::ICON_SIZE as f32
-            + n.saturating_sub(1) as f32 * render::ICON_PADDING as f32;
-        let stride = (render::ICON_SIZE + render::ICON_PADDING) as f32;
+        let total_w = n as f32 * ICON_SIZE + n.saturating_sub(1) as f32 * ICON_PADDING;
+        let stride = ICON_SIZE + ICON_PADDING;
 
         for (idx, slot) in self.anim_slots.iter_mut().enumerate() {
             let target = -total_w / 2.0 + idx as f32 * stride;
@@ -320,11 +351,11 @@ impl Dock {
     /// ENTER: width + x springs first, then entering icons' y springs.
     /// EXIT:  leaving icons' y springs first, then width + x springs contract.
     fn tick_animations(&mut self, dt: f32) {
-        self.width_spring.step(dt);
+        self.width_spring.step(dt, &self.spring_config);
 
         for slot in &mut self.anim_slots {
-            slot.x_spring.step(dt);
-            slot.y_spring.step(dt);
+            slot.x_spring.step(dt, &self.spring_config);
+            slot.y_spring.step(dt, &self.spring_config);
         }
 
         // EXIT phase transition: when leaving icons are nearly off-screen,
@@ -332,12 +363,13 @@ impl Dock {
         // Use a loose threshold (4px) so the next phase starts while the icon
         // is still barely visible, eliminating the perceptible gap.
         let had_leaving = self.anim_slots.iter().any(|s| s.leaving);
-        self.anim_slots
-            .retain(|s| !(s.leaving && s.y_spring.is_near_target(4.0)));
+        self.anim_slots.retain(|s| {
+            !(s.leaving && (s.y_spring.value - s.y_spring.target).abs() < 4.0)
+        });
         if had_leaving && !self.anim_slots.iter().any(|s| s.leaving) {
             // All leaving icons gone — contract dock and reposition
             self.recompute_x_targets(false);
-            let target_width = render::dock_width(self.anim_slots.len()) as f32;
+            let target_width = dock_width(self.anim_slots.len()) as f32;
             self.width_spring.set_target(target_width);
         }
 
@@ -345,12 +377,13 @@ impl Dock {
         // start entering icons' slide-up animation.
         // Use a loose threshold (3px) to overlap phases slightly.
         if self.pending_entries {
-            let resize_done = self.width_spring.is_near_target(3.0)
-                && self
-                    .anim_slots
-                    .iter()
-                    .all(|s| s.x_spring.is_near_target(3.0));
-            if resize_done {
+            let width_near =
+                (self.width_spring.value - self.width_spring.target).abs() < 3.0;
+            let x_near = self
+                .anim_slots
+                .iter()
+                .all(|s| (s.x_spring.value - s.x_spring.target).abs() < 3.0);
+            if width_near && x_near {
                 for slot in &mut self.anim_slots {
                     if slot.entering {
                         slot.y_spring.set_target(0.0);
@@ -405,18 +438,66 @@ impl Dock {
         }
     }
 
+    /// Build the element tree for the dock background.
+    /// Icons are rendered separately via direct Skia calls since their positions
+    /// are controlled by per-icon spring animations (absolute positioning).
+    fn build_ui(&self) -> Element {
+        let bg_width = self.width_spring.value;
+        let surface_width = self.width as f32;
+        let surface_height = self.height as f32;
+
+        if bg_width < 2.0 && self.anim_slots.is_empty() {
+            return container().size(surface_width, surface_height);
+        }
+
+        // Center the background panel within the surface.
+        // Use a row with spacers to center the background container horizontally.
+        row()
+            .size(surface_width, surface_height)
+            .justify(Justify::Center)
+            .align_items(Alignment::Start)
+            .child(
+                container()
+                    .width(bg_width)
+                    .height(surface_height)
+                    .background(rgba(30, 30, 30, 190))
+                    .rounded(DOCK_RADIUS)
+                    .border(rgba(255, 255, 255, 30), 1.0),
+            )
+    }
+
     fn draw(&mut self) {
         if !self.configured || !self.needs_redraw {
             return;
         }
 
-        let pool = match self.pool.as_mut() {
-            Some(p) => p,
-            None => return,
-        };
+        if self.pool.is_none() {
+            return;
+        }
 
         let width = self.width;
         let height = self.height;
+
+        // Render to Skia surface first (no pool borrow needed)
+        let mut surface = skia_safe::surfaces::raster_n32_premul((width as i32, height as i32))
+            .expect("Failed to create Skia surface");
+
+        {
+            let skia_canvas = surface.canvas();
+            skia_canvas.clear(skia_safe::Color::TRANSPARENT);
+
+            // Render the background using ui framework pipeline
+            let element_tree = self.build_ui();
+            let (layout_tree, _) = compute_layout(&element_tree, width as f32, height as f32);
+            let commands = build_display_list(&layout_tree, &element_tree, None);
+            self.renderer.execute(skia_canvas, &commands);
+
+            // Render icons directly using Skia (positioned by springs)
+            self.render_icons(skia_canvas, width, height);
+        }
+
+        // Now borrow pool to create buffer and copy pixels
+        let pool = self.pool.as_mut().unwrap();
         let stride = width as i32 * 4;
         let buf_size = (stride * height as i32) as usize;
 
@@ -424,7 +505,7 @@ impl Dock {
             pool.resize(buf_size).expect("Failed to resize pool");
         }
 
-        let (buffer, canvas) = pool
+        let (buffer, canvas_data) = pool
             .create_buffer(
                 width as i32,
                 height as i32,
@@ -433,44 +514,77 @@ impl Dock {
             )
             .expect("Failed to create buffer");
 
-        // Build render slots from animation state
-        let render_slots: Vec<RenderSlot> = self
-            .anim_slots
-            .iter()
-            .map(|slot| RenderSlot {
-                app: &slot.app,
-                icon: slot.icon.as_ref(),
-                x_offset: slot.x_spring.value,
-                y_offset: slot.y_spring.value,
-                show_dot: slot.app.is_active && !slot.entering && !slot.leaving,
-            })
-            .collect();
-
-        let bg_width = self.width_spring.value;
-        let pixmap = render::render_dock(&render_slots, bg_width, width, height);
-
-        // Convert RGBA (tiny-skia) to ARGB8888 (Wayland, BGRA in little-endian)
-        let src = pixmap.data();
-        for i in 0..(width * height) as usize {
-            let si = i * 4;
-            let r = src[si];
-            let g = src[si + 1];
-            let b = src[si + 2];
-            let a = src[si + 3];
-            canvas[si] = b;
-            canvas[si + 1] = g;
-            canvas[si + 2] = r;
-            canvas[si + 3] = a;
-        }
+        // Copy pixels from Skia surface to SHM buffer.
+        // Skia's native N32 premul format on little-endian is BGRA, which matches
+        // Wayland's Argb8888 (BGRA in little-endian byte order). No conversion needed.
+        let image_info = surface.image_info();
+        let row_bytes = width as usize * 4;
+        surface.read_pixels(&image_info, canvas_data, row_bytes, (0, 0));
 
         if let Some(ls) = &self.layer_surface {
-            let surface = ls.wl_surface();
-            surface.attach(Some(buffer.wl_buffer()), 0, 0);
-            surface.damage_buffer(0, 0, width as i32, height as i32);
-            surface.commit();
+            let wl_surface = ls.wl_surface();
+            wl_surface.attach(Some(buffer.wl_buffer()), 0, 0);
+            wl_surface.damage_buffer(0, 0, width as i32, height as i32);
+            wl_surface.commit();
         }
 
         self.needs_redraw = false;
+    }
+
+    /// Render icons directly onto the Skia canvas.
+    /// Each icon's position is controlled by its own x/y spring animations.
+    /// Icons are clipped to the dock background shape for smooth enter/exit reveals.
+    fn render_icons(&self, canvas: &skia_safe::Canvas, surface_width: u32, surface_height: u32) {
+        let bg_width = self.width_spring.value;
+
+        if self.anim_slots.is_empty() {
+            return;
+        }
+
+        // Create clip from background shape so icons are revealed/hidden at edges
+        let bg_x = (surface_width as f32 - bg_width) / 2.0;
+        let bg_rrect = skia_safe::RRect::new_rect_xy(
+            skia_safe::Rect::from_xywh(bg_x, 0.0, bg_width, surface_height as f32),
+            DOCK_RADIUS,
+            DOCK_RADIUS,
+        );
+        canvas.save();
+        canvas.clip_rrect(bg_rrect, skia_safe::ClipOp::Intersect, true);
+
+        let center_x = surface_width as f32 / 2.0;
+
+        for slot in &self.anim_slots {
+            let x = center_x + slot.x_spring.value;
+            let base_y = (surface_height as f32 - ICON_SIZE) / 2.0 - 2.0;
+            let y = base_y + slot.y_spring.value;
+
+            // Draw icon
+            if let Some(icon) = &slot.icon {
+                let dst = skia_safe::Rect::from_xywh(x, y, ICON_SIZE, ICON_SIZE);
+                canvas.draw_image_rect(icon, None, dst, &skia_safe::Paint::default());
+            } else {
+                // Placeholder circle
+                let mut paint = skia_safe::Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(skia_safe::Color::from_argb(200, 80, 80, 80));
+                let cx = x + ICON_SIZE / 2.0;
+                let cy = y + ICON_SIZE / 2.0;
+                let r = ICON_SIZE / 2.0 - 2.0;
+                canvas.draw_circle((cx, cy), r, &paint);
+            }
+
+            // Active indicator dot
+            if slot.app.is_active && !slot.entering && !slot.leaving {
+                let dot_x = x + ICON_SIZE / 2.0;
+                let dot_y = surface_height as f32 - 6.0;
+                let mut paint = skia_safe::Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(skia_safe::Color::from_argb(220, 255, 255, 255));
+                canvas.draw_circle((dot_x, dot_y), 2.5, &paint);
+            }
+        }
+
+        canvas.restore(); // pop clip
     }
 }
 
