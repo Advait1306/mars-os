@@ -309,13 +309,8 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 name = "dock"
 version = "0.1.0"
 dependencies = [
- "calloop 0.14.4",
- "calloop-wayland-source 0.4.1",
  "env_logger",
  "log",
- "resvg",
- "skia-safe",
- "smithay-client-toolkit",
  "ui",
  "wayland-client",
  "wayland-protocols-plasma",

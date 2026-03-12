@@ -5,12 +5,7 @@ edition = "2021"
 
 [dependencies]
 ui = { path = "../ui" }
-smithay-client-toolkit = { version = "0.19", features = ["calloop"] }
 wayland-client = "0.31"
 wayland-protocols-plasma = { version = "0.3", features = ["client"] }
-calloop = "0.14"
-calloop-wayland-source = "0.4"
-skia-safe = { version = "0.82", features = ["textlayout"] }
-resvg = "0.44"
 log = "0.4"
 env_logger = "0.11"

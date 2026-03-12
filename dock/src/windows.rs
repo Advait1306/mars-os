@@ -274,3 +274,60 @@ fn extract_icon_from_desktop(contents: &str) -> Option<String> {
     }
     None
 }
+
+// --- PlasmaState: wrapper for the plasma-protocol event queue ---
+
+/// State type for the separate Wayland event queue that handles
+/// plasma window management events. DockView owns this and dispatches
+/// it in tick().
+pub struct PlasmaState {
+    pub tracker: WindowTracker,
+}
+
+impl PlasmaState {
+    pub fn new() -> Self {
+        Self {
+            tracker: WindowTracker::new(),
+        }
+    }
+}
+
+impl AsMut<WindowTracker> for PlasmaState {
+    fn as_mut(&mut self) -> &mut WindowTracker {
+        &mut self.tracker
+    }
+}
+
+impl Dispatch<org_kde_plasma_window_management::OrgKdePlasmaWindowManagement, ()> for PlasmaState {
+    fn event(
+        state: &mut Self,
+        proxy: &org_kde_plasma_window_management::OrgKdePlasmaWindowManagement,
+        event: org_kde_plasma_window_management::Event,
+        data: &(),
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        <WindowTracker as Dispatch<
+            org_kde_plasma_window_management::OrgKdePlasmaWindowManagement,
+            (),
+            PlasmaState,
+        >>::event(state, proxy, event, data, conn, qh);
+    }
+}
+
+impl Dispatch<org_kde_plasma_window::OrgKdePlasmaWindow, u32> for PlasmaState {
+    fn event(
+        state: &mut Self,
+        proxy: &org_kde_plasma_window::OrgKdePlasmaWindow,
+        event: org_kde_plasma_window::Event,
+        data: &u32,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        <WindowTracker as Dispatch<
+            org_kde_plasma_window::OrgKdePlasmaWindow,
+            u32,
+            PlasmaState,
+        >>::event(state, proxy, event, data, conn, qh);
+    }
+}
