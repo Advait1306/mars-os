@@ -13,7 +13,15 @@ The remaining deferred tasks are:
 - **Phase 10 Tasks 5-7**: Wayland clipboard integration via wl_data_device (needs VM)
 
 All event types, handler slots, dispatch logic, and Wayland protocol handlers are implemented.
-The next plan to work on is **4-visual-properties**.
+
+### Plan 4-visual-properties: IN PROGRESS
+Phase 1 (core visual upgrades) is DONE:
+- Per-corner border radius (`CornerRadii` type replacing `corner_radius: f32`)
+- Gradient backgrounds (linear, radial, conic via `Gradient` enum + `DrawCommand::GradientRect`)
+- Inset box shadows (`DrawCommand::InsetBoxShadow` with Chromium-style EvenOdd path clipping)
+- Multiple box shadows (`Vec<BoxShadow>` on Element, both outset and inset)
+
+The next phase to work on is **Phase 2** (border styles, per-side borders, outline).
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

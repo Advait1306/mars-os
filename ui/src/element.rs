@@ -6,8 +6,9 @@ use crate::input::{
     TextInputEvent, TouchEvent, WheelEvent,
 };
 use crate::style::{
-    AlignContent, Alignment, Border, Dim, Direction, DisplayMode, FlexWrap, GridAutoFlow,
-    GridPlacement, Justify, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
+    AlignContent, Alignment, Border, BoxShadow, CornerRadii, Dim, Direction, DisplayMode, FlexWrap,
+    Gradient, GridAutoFlow, GridPlacement, Justify, Overflow, PositionType, TextAlign,
+    TextDecorationStyle, TrackSize,
 };
 
 pub enum ElementKind {
@@ -107,8 +108,10 @@ pub struct Element {
 
     // Visual props
     pub background: Option<Color>,
-    pub corner_radius: f32,
+    pub gradient: Option<Gradient>,
+    pub corner_radii: CornerRadii,
     pub border: Option<Border>,
+    pub box_shadows: Vec<BoxShadow>,
     pub opacity: f32,
     pub clip: bool,
 
@@ -273,8 +276,10 @@ impl Default for Element {
             justify_self: None,
             // Visual
             background: None,
-            corner_radius: 0.0,
+            gradient: None,
+            corner_radii: CornerRadii::ZERO,
             border: None,
+            box_shadows: Vec::new(),
             opacity: 1.0,
             clip: false,
             font_size: 14.0,
@@ -780,12 +785,47 @@ impl Element {
         self.background = Some(c);
         self
     }
+    pub fn background_gradient(mut self, gradient: Gradient) -> Self {
+        self.gradient = Some(gradient);
+        self
+    }
     pub fn rounded(mut self, r: f32) -> Self {
-        self.corner_radius = r;
+        self.corner_radii = CornerRadii::uniform(r);
+        self
+    }
+    pub fn corner_radii(mut self, tl: f32, tr: f32, br: f32, bl: f32) -> Self {
+        self.corner_radii = CornerRadii {
+            top_left: tl,
+            top_right: tr,
+            bottom_right: br,
+            bottom_left: bl,
+        };
         self
     }
     pub fn border(mut self, color: Color, width: f32) -> Self {
         self.border = Some(Border { color, width });
+        self
+    }
+    pub fn box_shadow(mut self, color: Color, offset_x: f32, offset_y: f32, blur: f32, spread: f32) -> Self {
+        self.box_shadows.push(BoxShadow {
+            color,
+            offset_x,
+            offset_y,
+            blur,
+            spread,
+            inset: false,
+        });
+        self
+    }
+    pub fn inset_shadow(mut self, color: Color, offset_x: f32, offset_y: f32, blur: f32, spread: f32) -> Self {
+        self.box_shadows.push(BoxShadow {
+            color,
+            offset_x,
+            offset_y,
+            blur,
+            spread,
+            inset: true,
+        });
         self
     }
     pub fn opacity(mut self, o: f32) -> Self {

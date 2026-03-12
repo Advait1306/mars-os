@@ -141,6 +141,89 @@ pub enum TextDecorationStyle {
     Wavy,
 }
 
+/// Per-corner border radii (top-left, top-right, bottom-right, bottom-left).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CornerRadii {
+    pub top_left: f32,
+    pub top_right: f32,
+    pub bottom_right: f32,
+    pub bottom_left: f32,
+}
+
+impl CornerRadii {
+    pub const ZERO: Self = Self {
+        top_left: 0.0,
+        top_right: 0.0,
+        bottom_right: 0.0,
+        bottom_left: 0.0,
+    };
+
+    /// Uniform radius on all corners.
+    pub fn uniform(r: f32) -> Self {
+        Self {
+            top_left: r,
+            top_right: r,
+            bottom_right: r,
+            bottom_left: r,
+        }
+    }
+
+    /// Returns true if all corners are zero.
+    pub fn is_zero(&self) -> bool {
+        self.top_left == 0.0
+            && self.top_right == 0.0
+            && self.bottom_right == 0.0
+            && self.bottom_left == 0.0
+    }
+}
+
+impl Default for CornerRadii {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+/// A color stop in a gradient.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColorStop {
+    pub color: Color,
+    /// Position in 0.0–1.0 range. None = auto-distribute evenly.
+    pub position: Option<f32>,
+}
+
+/// Gradient background definition.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Gradient {
+    Linear {
+        /// CSS angle in degrees: 0 = to top, 90 = to right, 180 = to bottom (default).
+        angle_deg: f32,
+        stops: Vec<ColorStop>,
+    },
+    Radial {
+        /// Center as fraction of element bounds (0.0–1.0). None = center (0.5, 0.5).
+        center: Option<(f32, f32)>,
+        stops: Vec<ColorStop>,
+    },
+    Conic {
+        /// Center as fraction of element bounds. None = center.
+        center: Option<(f32, f32)>,
+        /// Starting angle in degrees.
+        from_angle_deg: f32,
+        stops: Vec<ColorStop>,
+    },
+}
+
+/// Box shadow definition (supports both outset and inset shadows).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxShadow {
+    pub color: Color,
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub inset: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Border {
     pub color: Color,

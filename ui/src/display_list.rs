@@ -2,7 +2,7 @@ use crate::animator::Animator;
 use crate::color::Color;
 use crate::element::{Element, ElementKind, ImageSource, TextSpan};
 use crate::layout::{LayoutNode, Rect};
-use crate::style::{Border, DisplayMode, TextAlign, TextDecorationStyle};
+use crate::style::{Border, CornerRadii, DisplayMode, Gradient, TextAlign, TextDecorationStyle};
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -15,7 +15,7 @@ pub enum DrawCommand {
     Rect {
         bounds: Rect,
         background: Color,
-        corner_radius: f32,
+        corner_radii: CornerRadii,
         border: Option<Border>,
     },
     Text {
@@ -48,9 +48,22 @@ pub enum DrawCommand {
         source: ImageSource,
         bounds: Rect,
     },
+    GradientRect {
+        bounds: Rect,
+        gradient: Gradient,
+        corner_radii: CornerRadii,
+    },
     BoxShadow {
         bounds: Rect,
-        corner_radius: f32,
+        corner_radii: CornerRadii,
+        blur: f32,
+        spread: f32,
+        color: Color,
+        offset: Point,
+    },
+    InsetBoxShadow {
+        bounds: Rect,
+        corner_radii: CornerRadii,
         blur: f32,
         spread: f32,
         color: Color,
@@ -58,7 +71,7 @@ pub enum DrawCommand {
     },
     PushClip {
         bounds: Rect,
-        corner_radius: f32,
+        corner_radii: CornerRadii,
     },
     PopClip,
     PushLayer {
@@ -67,7 +80,7 @@ pub enum DrawCommand {
     PopLayer,
     BackdropBlur {
         bounds: Rect,
-        corner_radius: f32,
+        corner_radii: CornerRadii,
         blur_radius: f32,
     },
     PushTranslate {
@@ -161,7 +174,7 @@ fn emit_commands(
     if element.clip {
         commands.push(DrawCommand::PushClip {
             bounds: bounds.clone(),
-            corner_radius: element.corner_radius,
+            corner_radii: element.corner_radii,
         });
         pop_clip = true;
     }
@@ -174,21 +187,64 @@ fn emit_commands(
         pop_layer = true;
     }
 
+    // Outset box shadows (drawn behind the element)
+    for shadow in &element.box_shadows {
+        if !shadow.inset {
+            commands.push(DrawCommand::BoxShadow {
+                bounds: bounds.clone(),
+                corner_radii: element.corner_radii,
+                blur: shadow.blur,
+                spread: shadow.spread,
+                color: shadow.color,
+                offset: Point {
+                    x: shadow.offset_x,
+                    y: shadow.offset_y,
+                },
+            });
+        }
+    }
+
     // Background
     if let Some(bg) = element.background {
         commands.push(DrawCommand::Rect {
             bounds: bounds.clone(),
             background: bg,
-            corner_radius: element.corner_radius,
+            corner_radii: element.corner_radii,
             border: element.border.clone(),
         });
     } else if element.border.is_some() {
         commands.push(DrawCommand::Rect {
             bounds: bounds.clone(),
             background: crate::color::TRANSPARENT,
-            corner_radius: element.corner_radius,
+            corner_radii: element.corner_radii,
             border: element.border.clone(),
         });
+    }
+
+    // Gradient (drawn on top of solid background, under children)
+    if let Some(ref gradient) = element.gradient {
+        commands.push(DrawCommand::GradientRect {
+            bounds: bounds.clone(),
+            gradient: gradient.clone(),
+            corner_radii: element.corner_radii,
+        });
+    }
+
+    // Inset box shadows (drawn inside the element, on top of background)
+    for shadow in &element.box_shadows {
+        if shadow.inset {
+            commands.push(DrawCommand::InsetBoxShadow {
+                bounds: bounds.clone(),
+                corner_radii: element.corner_radii,
+                blur: shadow.blur,
+                spread: shadow.spread,
+                color: shadow.color,
+                offset: Point {
+                    x: shadow.offset_x,
+                    y: shadow.offset_y,
+                },
+            });
+        }
     }
 
     // Text

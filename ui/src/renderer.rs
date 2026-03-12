@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use skia_safe::{
     Canvas, Paint, RRect, FontMgr, FontStyle,
-    PaintStyle, MaskFilter, BlurStyle, ClipOp,
-    image_filters, canvas::SaveLayerRec,
+    PaintStyle, MaskFilter, BlurStyle, ClipOp, TileMode,
+    image_filters, canvas::SaveLayerRec, gradient_shader,
 };
 use skia_safe::textlayout::{FontCollection, ParagraphBuilder, ParagraphStyle, TextStyle, TextAlign as SkTextAlign,
     TextDecorationStyle as SkTextDecorationStyle, RectHeightStyle, RectWidthStyle};
@@ -29,8 +29,8 @@ impl SkiaRenderer {
     pub fn execute(&mut self, canvas: &Canvas, commands: &[DrawCommand]) {
         for cmd in commands {
             match cmd {
-                DrawCommand::Rect { bounds, background, corner_radius, border } => {
-                    self.draw_rect(canvas, bounds, background, *corner_radius, border.as_ref());
+                DrawCommand::Rect { bounds, background, corner_radii, border } => {
+                    self.draw_rect(canvas, bounds, background, corner_radii, border.as_ref());
                 }
                 DrawCommand::Text { text, position, font_size, color, max_width, font_family,
                     font_weight, font_italic, line_height, text_align, max_lines, text_overflow_ellipsis,
@@ -47,12 +47,18 @@ impl SkiaRenderer {
                 DrawCommand::Image { source, bounds } => {
                     self.draw_image(canvas, source, bounds);
                 }
-                DrawCommand::BoxShadow { bounds, corner_radius, blur, spread, color, offset } => {
-                    self.draw_box_shadow(canvas, bounds, *corner_radius, *blur, *spread, color, offset);
+                DrawCommand::GradientRect { bounds, gradient, corner_radii } => {
+                    self.draw_gradient_rect(canvas, bounds, gradient, corner_radii);
                 }
-                DrawCommand::PushClip { bounds, corner_radius } => {
+                DrawCommand::BoxShadow { bounds, corner_radii, blur, spread, color, offset } => {
+                    self.draw_box_shadow(canvas, bounds, corner_radii, *blur, *spread, color, offset);
+                }
+                DrawCommand::InsetBoxShadow { bounds, corner_radii, blur, spread, color, offset } => {
+                    self.draw_inset_shadow(canvas, bounds, corner_radii, *blur, *spread, color, offset);
+                }
+                DrawCommand::PushClip { bounds, corner_radii } => {
                     canvas.save();
-                    let rrect = to_rrect(bounds, *corner_radius);
+                    let rrect = to_rrect(bounds, corner_radii);
                     canvas.clip_rrect(rrect, ClipOp::Intersect, true);
                 }
                 DrawCommand::PopClip => {
@@ -67,8 +73,8 @@ impl SkiaRenderer {
                 DrawCommand::PopLayer => {
                     canvas.restore();
                 }
-                DrawCommand::BackdropBlur { bounds, corner_radius, blur_radius } => {
-                    self.draw_backdrop_blur(canvas, bounds, *corner_radius, *blur_radius);
+                DrawCommand::BackdropBlur { bounds, corner_radii, blur_radius } => {
+                    self.draw_backdrop_blur(canvas, bounds, corner_radii, *blur_radius);
                 }
                 DrawCommand::PushTranslate { offset } => {
                     canvas.save();
@@ -89,8 +95,8 @@ impl SkiaRenderer {
         }
     }
 
-    fn draw_rect(&self, canvas: &Canvas, bounds: &Rect, bg: &Color, radius: f32, border: Option<&crate::style::Border>) {
-        let rrect = to_rrect(bounds, radius);
+    fn draw_rect(&self, canvas: &Canvas, bounds: &Rect, bg: &Color, radii: &crate::style::CornerRadii, border: Option<&crate::style::Border>) {
+        let rrect = to_rrect(bounds, radii);
 
         // Fill
         if bg.a > 0 {
@@ -107,6 +113,123 @@ impl SkiaRenderer {
             paint.set_style(PaintStyle::Stroke);
             paint.set_stroke_width(b.width);
             paint.set_color(to_skia_color(&b.color));
+            canvas.draw_rrect(rrect, &paint);
+        }
+    }
+
+    fn draw_gradient_rect(
+        &self,
+        canvas: &Canvas,
+        bounds: &Rect,
+        gradient: &crate::style::Gradient,
+        radii: &crate::style::CornerRadii,
+    ) {
+        let rrect = to_rrect(bounds, radii);
+
+        // Resolve color stops: auto-distribute positions for stops without explicit position
+        let resolve_stops = |stops: &[crate::style::ColorStop]| -> (Vec<skia_safe::Color>, Option<Vec<f32>>) {
+            let colors: Vec<skia_safe::Color> = stops.iter().map(|s| to_skia_color(&s.color)).collect();
+            let has_any_position = stops.iter().any(|s| s.position.is_some());
+            if !has_any_position {
+                // Even distribution — pass None to Skia
+                (colors, None)
+            } else {
+                // Auto-distribute: fill in None positions linearly between known positions
+                let n = stops.len();
+                let mut positions = vec![0.0f32; n];
+                // Set known positions
+                for (i, stop) in stops.iter().enumerate() {
+                    if let Some(p) = stop.position {
+                        positions[i] = p;
+                    } else if i == 0 {
+                        positions[i] = 0.0;
+                    } else if i == n - 1 {
+                        positions[i] = 1.0;
+                    } else {
+                        positions[i] = f32::NAN; // mark for interpolation
+                    }
+                }
+                // Interpolate NaN positions
+                let mut i = 0;
+                while i < n {
+                    if positions[i].is_nan() {
+                        let start_idx = i - 1;
+                        let start_val = positions[start_idx];
+                        let mut end_idx = i + 1;
+                        while end_idx < n && positions[end_idx].is_nan() {
+                            end_idx += 1;
+                        }
+                        let end_val = if end_idx < n { positions[end_idx] } else { 1.0 };
+                        let count = end_idx - start_idx;
+                        for j in (start_idx + 1)..end_idx {
+                            positions[j] = start_val + (end_val - start_val) * ((j - start_idx) as f32 / count as f32);
+                        }
+                        i = end_idx;
+                    } else {
+                        i += 1;
+                    }
+                }
+                (colors, Some(positions))
+            }
+        };
+
+        let shader = match gradient {
+            crate::style::Gradient::Linear { angle_deg, stops } => {
+                let (colors, positions) = resolve_stops(stops);
+                // CSS angles: 0deg = to top, 90deg = to right, 180deg = to bottom
+                let angle_rad = (angle_deg - 90.0).to_radians();
+                let cx = bounds.x + bounds.width / 2.0;
+                let cy = bounds.y + bounds.height / 2.0;
+                // Half-diagonal projection for full coverage
+                let half_w = bounds.width / 2.0;
+                let half_h = bounds.height / 2.0;
+                let cos_a = angle_rad.cos();
+                let sin_a = angle_rad.sin();
+                let len = (half_w * cos_a).abs() + (half_h * sin_a).abs();
+                let start = skia_safe::Point::new(cx - cos_a * len, cy - sin_a * len);
+                let end = skia_safe::Point::new(cx + cos_a * len, cy + sin_a * len);
+                gradient_shader::linear(
+                    (start, end),
+                    skia_safe::gradient_shader::GradientShaderColors::Colors(&colors),
+                    positions.as_deref(),
+                    TileMode::Clamp,
+                )
+            }
+            crate::style::Gradient::Radial { center, stops } => {
+                let (colors, positions) = resolve_stops(stops);
+                let (fx, fy) = center.unwrap_or((0.5, 0.5));
+                let cx = bounds.x + bounds.width * fx;
+                let cy = bounds.y + bounds.height * fy;
+                // Radius: farthest corner distance
+                let radius = ((bounds.width / 2.0).powi(2) + (bounds.height / 2.0).powi(2)).sqrt();
+                gradient_shader::radial(
+                    skia_safe::Point::new(cx, cy),
+                    radius,
+                    skia_safe::gradient_shader::GradientShaderColors::Colors(&colors),
+                    positions.as_deref(),
+                    TileMode::Clamp,
+                )
+            }
+            crate::style::Gradient::Conic { center, from_angle_deg, stops } => {
+                let (colors, positions) = resolve_stops(stops);
+                let (fx, fy) = center.unwrap_or((0.5, 0.5));
+                let cx = bounds.x + bounds.width * fx;
+                let cy = bounds.y + bounds.height * fy;
+                gradient_shader::sweep(
+                    skia_safe::Point::new(cx, cy),
+                    skia_safe::gradient_shader::GradientShaderColors::Colors(&colors),
+                    positions.as_deref(),
+                    TileMode::Clamp,
+                    Some(*from_angle_deg),
+                    Some(*from_angle_deg + 360.0),
+                )
+            }
+        };
+
+        if let Some(shader) = shader {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            paint.set_shader(shader);
             canvas.draw_rrect(rrect, &paint);
         }
     }
@@ -438,14 +561,14 @@ impl SkiaRenderer {
         }
     }
 
-    fn draw_box_shadow(&self, canvas: &Canvas, bounds: &Rect, radius: f32, blur: f32, spread: f32, color: &Color, offset: &Point) {
+    fn draw_box_shadow(&self, canvas: &Canvas, bounds: &Rect, radii: &crate::style::CornerRadii, blur: f32, spread: f32, color: &Color, offset: &Point) {
         let expanded = Rect {
             x: bounds.x + offset.x - spread,
             y: bounds.y + offset.y - spread,
             width: bounds.width + spread * 2.0,
             height: bounds.height + spread * 2.0,
         };
-        let rrect = to_rrect(&expanded, radius);
+        let rrect = to_rrect(&expanded, radii);
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         paint.set_color(to_skia_color(color));
@@ -453,9 +576,58 @@ impl SkiaRenderer {
         canvas.draw_rrect(rrect, &paint);
     }
 
-    fn draw_backdrop_blur(&self, canvas: &Canvas, bounds: &Rect, radius: f32, blur_radius: f32) {
+    fn draw_inset_shadow(
+        &self,
+        canvas: &Canvas,
+        bounds: &Rect,
+        radii: &crate::style::CornerRadii,
+        blur: f32,
+        spread: f32,
+        color: &Color,
+        offset: &Point,
+    ) {
         canvas.save();
-        let rrect = to_rrect(bounds, radius);
+        // Clip to the element bounds so the shadow only shows inside
+        let clip_rrect = to_rrect(bounds, radii);
+        canvas.clip_rrect(clip_rrect, ClipOp::Intersect, true);
+
+        // The inner rect is the element bounds inset by spread, offset by shadow offset.
+        // The shadow is the blur of the area *outside* this inner rect but *inside* the clip.
+        let inner = Rect {
+            x: bounds.x + offset.x + spread,
+            y: bounds.y + offset.y + spread,
+            width: (bounds.width - spread * 2.0).max(0.0),
+            height: (bounds.height - spread * 2.0).max(0.0),
+        };
+        let inner_rrect = to_rrect(&inner, radii);
+
+        // Draw a large outer rect with the inner rect subtracted (EvenOdd fill rule)
+        // The large outer rect extends well beyond the clip to ensure full coverage
+        let margin = blur * 2.0 + spread.abs() + 50.0;
+        let outer_rect = skia_safe::Rect::from_xywh(
+            bounds.x - margin,
+            bounds.y - margin,
+            bounds.width + margin * 2.0,
+            bounds.height + margin * 2.0,
+        );
+
+        let mut path = skia_safe::Path::new();
+        path.set_fill_type(skia_safe::PathFillType::EvenOdd);
+        path.add_rect(outer_rect, None);
+        path.add_rrect(inner_rrect, None);
+
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(to_skia_color(color));
+        paint.set_mask_filter(MaskFilter::blur(BlurStyle::Normal, blur / 2.0, false));
+        canvas.draw_path(&path, &paint);
+
+        canvas.restore();
+    }
+
+    fn draw_backdrop_blur(&self, canvas: &Canvas, bounds: &Rect, radii: &crate::style::CornerRadii, blur_radius: f32) {
+        canvas.save();
+        let rrect = to_rrect(bounds, radii);
         canvas.clip_rrect(rrect, ClipOp::Intersect, true);
 
         if let Some(filter) = image_filters::blur((blur_radius, blur_radius), None, None, None) {
@@ -538,12 +710,24 @@ fn to_skia_decoration_style(s: crate::style::TextDecorationStyle) -> SkTextDecor
     }
 }
 
-fn to_rrect(bounds: &Rect, radius: f32) -> RRect {
-    RRect::new_rect_xy(
-        skia_safe::Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height),
-        radius,
-        radius,
-    )
+fn to_rrect(bounds: &Rect, radii: &crate::style::CornerRadii) -> RRect {
+    let rect = skia_safe::Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height);
+    if radii.top_left == radii.top_right
+        && radii.top_right == radii.bottom_right
+        && radii.bottom_right == radii.bottom_left
+    {
+        // Fast path: uniform radius
+        RRect::new_rect_xy(rect, radii.top_left, radii.top_left)
+    } else {
+        // Per-corner radii: [top-left, top-right, bottom-right, bottom-left], each (rx, ry)
+        let corner_radii = [
+            skia_safe::Point::new(radii.top_left, radii.top_left),
+            skia_safe::Point::new(radii.top_right, radii.top_right),
+            skia_safe::Point::new(radii.bottom_right, radii.bottom_right),
+            skia_safe::Point::new(radii.bottom_left, radii.bottom_left),
+        ];
+        RRect::new_rect_radii(rect, &corner_radii)
+    }
 }
 
 // Image loading functions
