@@ -171,6 +171,32 @@ fn emit_commands(
         });
     }
 
+    // TextInput
+    if let ElementKind::TextInput { ref value, ref placeholder } = element.kind {
+        let display_text = if value.is_empty() { placeholder } else { value };
+        let text_color = if value.is_empty() {
+            // Placeholder text uses dimmed color
+            let base = element.color.unwrap_or(crate::color::WHITE);
+            Color {
+                r: base.r,
+                g: base.g,
+                b: base.b,
+                a: (base.a as f32 * 0.4) as u8,
+            }
+        } else {
+            element.color.unwrap_or(crate::color::WHITE)
+        };
+        commands.push(DrawCommand::Text {
+            text: display_text.clone(),
+            position: Point {
+                x: bounds.x,
+                y: bounds.y,
+            },
+            font_size: element.font_size,
+            color: text_color,
+        });
+    }
+
     // Recurse into children
     for (child_layout, child_element) in node.children.iter().zip(element.children.iter()) {
         emit_commands(child_layout, child_element, animator, commands);

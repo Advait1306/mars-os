@@ -9,6 +9,14 @@ pub enum ElementKind {
     Image { source: ImageSource },
     Spacer,
     Divider { thickness: f32 },
+    TextInput { value: String, placeholder: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScrollDirection {
+    Vertical,
+    Horizontal,
+    Both,
 }
 
 #[derive(Debug, Clone)]
@@ -52,11 +60,16 @@ pub struct Element {
     pub initial: Option<From>,
     pub exit: Option<To>,
 
+    // Scroll
+    pub scroll_direction: Option<ScrollDirection>,
+
     // Event handlers
     pub on_click: Option<Box<dyn Fn()>>,
     pub on_hover: Option<Box<dyn Fn(bool)>>,
     pub on_drag: Option<Box<dyn Fn(f32, f32)>>,
     pub on_scroll: Option<Box<dyn Fn(f32, f32)>>,
+    pub on_change: Option<Box<dyn Fn(String)>>,
+    pub on_submit: Option<Box<dyn Fn()>>,
     pub cursor: Option<CursorStyle>,
 }
 
@@ -88,10 +101,13 @@ impl Default for Element {
             layout_animation: None,
             initial: None,
             exit: None,
+            scroll_direction: None,
             on_click: None,
             on_hover: None,
             on_drag: None,
             on_scroll: None,
+            on_change: None,
+            on_submit: None,
             cursor: None,
         }
     }
@@ -168,6 +184,44 @@ pub fn spacer() -> Element {
 pub fn divider() -> Element {
     Element {
         kind: ElementKind::Divider { thickness: 1.0 },
+        ..Default::default()
+    }
+}
+
+pub fn scroll() -> Element {
+    Element {
+        kind: ElementKind::Container,
+        scroll_direction: Some(ScrollDirection::Vertical),
+        clip: true,
+        ..Default::default()
+    }
+}
+
+pub fn scroll_x() -> Element {
+    Element {
+        kind: ElementKind::Container,
+        scroll_direction: Some(ScrollDirection::Horizontal),
+        clip: true,
+        ..Default::default()
+    }
+}
+
+pub fn scroll_xy() -> Element {
+    Element {
+        kind: ElementKind::Container,
+        scroll_direction: Some(ScrollDirection::Both),
+        clip: true,
+        ..Default::default()
+    }
+}
+
+pub fn text_input(value: &str) -> Element {
+    Element {
+        kind: ElementKind::TextInput {
+            value: value.to_string(),
+            placeholder: String::new(),
+        },
+        cursor: Some(CursorStyle::Text),
         ..Default::default()
     }
 }
@@ -284,6 +338,23 @@ impl Element {
     }
     pub fn on_scroll(mut self, f: impl Fn(f32, f32) + 'static) -> Self {
         self.on_scroll = Some(Box::new(f));
+        self
+    }
+    pub fn on_change(mut self, f: impl Fn(String) + 'static) -> Self {
+        self.on_change = Some(Box::new(f));
+        self
+    }
+    pub fn on_submit(mut self, f: impl Fn() + 'static) -> Self {
+        self.on_submit = Some(Box::new(f));
+        self
+    }
+    pub fn placeholder(mut self, text: &str) -> Self {
+        match &mut self.kind {
+            ElementKind::TextInput { placeholder, .. } => {
+                *placeholder = text.to_string();
+            }
+            _ => {}
+        }
         self
     }
     pub fn cursor(mut self, style: CursorStyle) -> Self {

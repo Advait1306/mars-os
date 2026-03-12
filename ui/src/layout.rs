@@ -84,18 +84,33 @@ fn build_taffy_node(
 
     let style = element_to_taffy_style(element);
 
-    if let ElementKind::Text { ref content } = element.kind {
-        // Text nodes are leaves with a measure context
-        tree.new_leaf_with_context(
-            style,
-            TextMeasure {
-                content: content.clone(),
-                font_size: element.font_size,
-            },
-        )
-        .unwrap()
-    } else {
-        tree.new_with_children(style, &child_ids).unwrap()
+    match &element.kind {
+        ElementKind::Text { content } => {
+            // Text nodes are leaves with a measure context
+            tree.new_leaf_with_context(
+                style,
+                TextMeasure {
+                    content: content.clone(),
+                    font_size: element.font_size,
+                },
+            )
+            .unwrap()
+        }
+        ElementKind::TextInput { value, placeholder } => {
+            // Text input nodes measure based on value or placeholder
+            let display_text = if value.is_empty() { placeholder.clone() } else { value.clone() };
+            tree.new_leaf_with_context(
+                style,
+                TextMeasure {
+                    content: display_text,
+                    font_size: element.font_size,
+                },
+            )
+            .unwrap()
+        }
+        _ => {
+            tree.new_with_children(style, &child_ids).unwrap()
+        }
     }
 }
 

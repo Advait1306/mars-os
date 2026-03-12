@@ -89,6 +89,8 @@ fn is_interactive(element: &Element) -> bool {
         || element.on_hover.is_some()
         || element.on_drag.is_some()
         || element.on_scroll.is_some()
+        || element.on_change.is_some()
+        || element.scroll_direction.is_some()
         || element.cursor.is_some()
 }
 
