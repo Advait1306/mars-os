@@ -806,7 +806,7 @@ impl SkiaRenderer {
     fn draw_rich_text(
         &mut self,
         canvas: &Canvas,
-        spans: &[crate::element::TextSpan],
+        spans: &[crate::element::RichSpan],
         pos: &Point,
         max_width: f32,
         base_font_size: f32,
@@ -915,81 +915,124 @@ impl SkiaRenderer {
 
         let mut builder = ParagraphBuilder::new(&para_style, self.font_collection.clone());
 
-        for span in spans {
-            let mut style = base_style.clone();
+        // Track placeholder images for rendering after layout
+        let mut placeholder_images: Vec<Option<&crate::element::ImageSource>> = Vec::new();
 
-            if let Some(c) = span.color {
-                style.set_color(to_skia_color(&c));
-            }
-            if let Some(size) = span.font_size {
-                style.set_font_size(size);
-            }
-            let w = span.font_weight.map(|w| Weight::from(w)).unwrap_or(base_weight);
-            let s = if span.italic { Slant::Italic } else { base_slant };
-            if span.font_weight.is_some() || span.italic {
-                style.set_font_style(FontStyle::new(w, Width::NORMAL, s));
-            }
-            if let Some(ref families) = span.font_family {
-                style.set_font_families(families);
-            }
-            if let Some(ls) = span.letter_spacing {
-                style.set_letter_spacing(ls);
-            }
+        for rich_span in spans {
+            match rich_span {
+                crate::element::RichSpan::Text(span) => {
+                    let mut style = base_style.clone();
 
-            let mut deco = TextDecoration::NO_DECORATION;
-            if span.underline { deco |= TextDecoration::UNDERLINE; }
-            if span.strikethrough { deco |= TextDecoration::LINE_THROUGH; }
-            if deco != TextDecoration::NO_DECORATION {
-                style.set_decoration_type(deco);
-                if let Some(deco_style) = span.text_decoration_style {
-                    style.set_decoration_style(to_skia_decoration_style(deco_style));
-                }
-                if let Some(deco_color) = span.text_decoration_color {
-                    style.set_decoration_color(to_skia_color(&deco_color));
-                }
-            }
+                    if let Some(c) = span.color {
+                        style.set_color(to_skia_color(&c));
+                    }
+                    if let Some(size) = span.font_size {
+                        style.set_font_size(size);
+                    }
+                    let w = span.font_weight.map(|w| Weight::from(w)).unwrap_or(base_weight);
+                    let s = if span.italic { Slant::Italic } else { base_slant };
+                    if span.font_weight.is_some() || span.italic {
+                        style.set_font_style(FontStyle::new(w, Width::NORMAL, s));
+                    }
+                    if let Some(ref families) = span.font_family {
+                        style.set_font_families(families);
+                    }
+                    if let Some(ls) = span.letter_spacing {
+                        style.set_letter_spacing(ls);
+                    }
 
-            if let Some(bg) = span.background {
-                let mut bg_paint = Paint::default();
-                bg_paint.set_color(to_skia_color(&bg));
-                style.set_background_paint(&bg_paint);
-            }
-
-            // Per-span font features
-            for (tag, value) in &span.font_features {
-                style.add_font_feature(tag, *value);
-            }
-            // Per-span variable font axes
-            if !span.font_variations.is_empty() {
-                let coords: Vec<skia_safe::font_arguments::variation_position::Coordinate> =
-                    span.font_variations.iter().map(|(axis, value)| {
-                        let bytes = axis.as_bytes();
-                        let tag = skia_safe::FourByteTag::from_chars(
-                            bytes.get(0).copied().unwrap_or(b' ') as char,
-                            bytes.get(1).copied().unwrap_or(b' ') as char,
-                            bytes.get(2).copied().unwrap_or(b' ') as char,
-                            bytes.get(3).copied().unwrap_or(b' ') as char,
-                        );
-                        skia_safe::font_arguments::variation_position::Coordinate {
-                            axis: tag,
-                            value: *value,
+                    let mut deco = TextDecoration::NO_DECORATION;
+                    if span.underline { deco |= TextDecoration::UNDERLINE; }
+                    if span.strikethrough { deco |= TextDecoration::LINE_THROUGH; }
+                    if deco != TextDecoration::NO_DECORATION {
+                        style.set_decoration_type(deco);
+                        if let Some(deco_style) = span.text_decoration_style {
+                            style.set_decoration_style(to_skia_decoration_style(deco_style));
                         }
-                    }).collect();
-                let fa = skia_safe::FontArguments::new()
-                    .set_variation_design_position(skia_safe::font_arguments::VariationPosition {
-                        coordinates: &coords,
-                    });
-                style.set_font_arguments(&fa);
-            }
+                        if let Some(deco_color) = span.text_decoration_color {
+                            style.set_decoration_color(to_skia_color(&deco_color));
+                        }
+                    }
 
-            builder.push_style(&style);
-            builder.add_text(&span.content);
-            builder.pop();
+                    if let Some(bg) = span.background {
+                        let mut bg_paint = Paint::default();
+                        bg_paint.set_color(to_skia_color(&bg));
+                        style.set_background_paint(&bg_paint);
+                    }
+
+                    // Per-span font features
+                    for (tag, value) in &span.font_features {
+                        style.add_font_feature(tag, *value);
+                    }
+                    // Per-span variable font axes
+                    if !span.font_variations.is_empty() {
+                        let coords: Vec<skia_safe::font_arguments::variation_position::Coordinate> =
+                            span.font_variations.iter().map(|(axis, value)| {
+                                let bytes = axis.as_bytes();
+                                let tag = skia_safe::FourByteTag::from_chars(
+                                    bytes.get(0).copied().unwrap_or(b' ') as char,
+                                    bytes.get(1).copied().unwrap_or(b' ') as char,
+                                    bytes.get(2).copied().unwrap_or(b' ') as char,
+                                    bytes.get(3).copied().unwrap_or(b' ') as char,
+                                );
+                                skia_safe::font_arguments::variation_position::Coordinate {
+                                    axis: tag,
+                                    value: *value,
+                                }
+                            }).collect();
+                        let fa = skia_safe::FontArguments::new()
+                            .set_variation_design_position(skia_safe::font_arguments::VariationPosition {
+                                coordinates: &coords,
+                            });
+                        style.set_font_arguments(&fa);
+                    }
+
+                    builder.push_style(&style);
+                    builder.add_text(&span.content);
+                    builder.pop();
+                }
+                crate::element::RichSpan::Placeholder(ph) => {
+                    use skia_safe::textlayout::{PlaceholderStyle as SkPlaceholderStyle,
+                        PlaceholderAlignment as SkPlaceholderAlignment};
+                    use skia_safe::textlayout::TextBaseline;
+                    let alignment = match ph.alignment {
+                        crate::element::PlaceholderAlignment::Baseline => SkPlaceholderAlignment::Baseline,
+                        crate::element::PlaceholderAlignment::AboveBaseline => SkPlaceholderAlignment::AboveBaseline,
+                        crate::element::PlaceholderAlignment::BelowBaseline => SkPlaceholderAlignment::BelowBaseline,
+                        crate::element::PlaceholderAlignment::Top => SkPlaceholderAlignment::Top,
+                        crate::element::PlaceholderAlignment::Bottom => SkPlaceholderAlignment::Bottom,
+                        crate::element::PlaceholderAlignment::Middle => SkPlaceholderAlignment::Middle,
+                    };
+                    let ph_style = SkPlaceholderStyle::new(
+                        ph.width, ph.height, alignment,
+                        TextBaseline::Alphabetic, ph.height,
+                    );
+                    builder.add_placeholder(&ph_style);
+                    placeholder_images.push(ph.image.as_ref());
+                }
+            }
         }
 
         let mut paragraph = builder.build();
         paragraph.layout(max_width);
         paragraph.paint(canvas, (pos.x, pos.y));
+
+        // Render images at placeholder positions
+        if !placeholder_images.is_empty() {
+            let rects = paragraph.get_rects_for_placeholders();
+            for (i, text_box) in rects.iter().enumerate() {
+                if let Some(Some(image_source)) = placeholder_images.get(i) {
+                    let dest = crate::layout::Rect {
+                        x: pos.x + text_box.rect.left,
+                        y: pos.y + text_box.rect.top,
+                        width: text_box.rect.width(),
+                        height: text_box.rect.height(),
+                    };
+                    self.draw_image(canvas, image_source, &dest, None,
+                        crate::element::ImageFit::Contain);
+                }
+            }
+        }
     }
 
     pub fn font_collection(&self) -> FontCollection {

@@ -16,7 +16,7 @@ use crate::style::{
 pub enum ElementKind {
     Container,
     Text { content: String },
-    RichText { spans: Vec<TextSpan> },
+    RichText { spans: Vec<RichSpan> },
     Image { source: ImageSource },
     Spacer,
     Divider { thickness: f32 },
@@ -98,6 +98,33 @@ pub struct TextSpan {
     pub text_decoration_style: Option<TextDecorationStyle>,
     pub font_features: Vec<(String, i32)>,
     pub font_variations: Vec<(String, f32)>,
+}
+
+/// Alignment of an inline placeholder relative to surrounding text.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlaceholderAlignment {
+    Baseline,
+    AboveBaseline,
+    BelowBaseline,
+    Top,
+    Bottom,
+    Middle,
+}
+
+/// An inline placeholder in rich text (for icons, images, etc.).
+#[derive(Debug, Clone)]
+pub struct InlinePlaceholder {
+    pub width: f32,
+    pub height: f32,
+    pub alignment: PlaceholderAlignment,
+    pub image: Option<ImageSource>,
+}
+
+/// A rich text span: either styled text or an inline placeholder.
+#[derive(Debug, Clone)]
+pub enum RichSpan {
+    Text(TextSpan),
+    Placeholder(InlinePlaceholder),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1489,9 +1516,25 @@ impl Element {
     pub fn span(mut self, content: &str, style_fn: impl FnOnce(SpanBuilder) -> SpanBuilder) -> Self {
         if let ElementKind::RichText { ref mut spans } = self.kind {
             let builder = style_fn(SpanBuilder::new(content));
-            spans.push(builder.build());
+            spans.push(RichSpan::Text(builder.build()));
         }
         self
+    }
+    /// Add an inline placeholder (icon/image) within rich text flow.
+    pub fn inline_placeholder(mut self, width: f32, height: f32, alignment: PlaceholderAlignment, image: Option<ImageSource>) -> Self {
+        if let ElementKind::RichText { ref mut spans } = self.kind {
+            spans.push(RichSpan::Placeholder(InlinePlaceholder {
+                width,
+                height,
+                alignment,
+                image,
+            }));
+        }
+        self
+    }
+    /// Add an inline image within rich text flow, aligned to the middle of the text.
+    pub fn inline_image(self, source: ImageSource, width: f32, height: f32) -> Self {
+        self.inline_placeholder(width, height, PlaceholderAlignment::Middle, Some(source))
     }
 
     // === Event handlers -- pointer (bubble phase) ===

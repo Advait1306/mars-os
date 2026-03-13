@@ -1,6 +1,6 @@
 use crate::animator::Animator;
 use crate::color::Color;
-use crate::element::{Element, ElementKind, ButtonVariant, ImageSource, ProgressVariant, ShapeData, TextSpan};
+use crate::element::{Element, ElementKind, ButtonVariant, ImageSource, ProgressVariant, RichSpan, ShapeData};
 use crate::select_state::SelectOption;
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
@@ -155,7 +155,7 @@ pub enum DrawCommand {
         corner_radii: CornerRadii,
     },
     RichText {
-        spans: Vec<TextSpan>,
+        spans: Vec<RichSpan>,
         position: Point,
         max_width: f32,
         font_size: f32,

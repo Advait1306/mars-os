@@ -24,7 +24,16 @@ Phase 9 (BiDi/i18n) is DONE:
 - `TextStyle::set_locale()` for proper CJK/Arabic line breaking rules
 - Applied in both `draw_text()` and `draw_rich_text()` renderer functions
 
-Remaining: Phase 10 (inline placeholders), Phase 11 (perf optimization)
+Phase 10 (Inline Placeholders) is DONE:
+- `PlaceholderAlignment` enum (Baseline, AboveBaseline, BelowBaseline, Top, Bottom, Middle)
+- `InlinePlaceholder` struct with width, height, alignment, optional ImageSource
+- `RichSpan` enum replacing `TextSpan` in RichText: `Text(TextSpan)` | `Placeholder(InlinePlaceholder)`
+- `ParagraphBuilder::add_placeholder()` with Skia `PlaceholderStyle`
+- `paragraph.get_rects_for_placeholders()` to position inline elements after layout
+- Images rendered at placeholder positions via `draw_image()`
+- `.inline_placeholder()` and `.inline_image()` builder methods on Element
+
+Remaining: Phase 11 (perf optimization)
 
 ## Current State
 ### Plan 3-events: DONE (remaining tasks need VM)
@@ -89,7 +98,7 @@ Phase 1 (Tier 1 improvements) is DONE:
 - Proper image fit computation for all modes
 
 Phase 2 (SVG path parser) is DONE:
-- SVG path `d` attribute parser supporting M/m, L/l, H/h, V/v, C/c, Q/q, Z/z commands
+- SVG path `d` attribute parser supporting M/m, L/l, H/h, V/v, C/c, Q/qx, Z/z commands
 - ElementKind::Shape with ShapeData (path_data, fill, stroke, viewbox)
 - DrawCommand::Path variant with viewbox-to-bounds scaling
 - shape() and shape_with_viewbox() builder functions
