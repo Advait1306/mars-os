@@ -158,6 +158,50 @@ impl SkiaRenderer {
                 DrawCommand::PopTransform => {
                     canvas.restore();
                 }
+                DrawCommand::Circle { center, radius, fill, stroke } => {
+                    if let Some(fill_color) = fill {
+                        let mut paint = Paint::default();
+                        paint.set_anti_alias(true);
+                        paint.set_color(skia_safe::Color::from_argb(fill_color.a, fill_color.r, fill_color.g, fill_color.b));
+                        canvas.draw_circle((center.x, center.y), *radius, &paint);
+                    }
+                    if let Some((stroke_color, stroke_width)) = stroke {
+                        let mut paint = Paint::default();
+                        paint.set_anti_alias(true);
+                        paint.set_style(skia_safe::paint::Style::Stroke);
+                        paint.set_stroke_width(*stroke_width);
+                        paint.set_color(skia_safe::Color::from_argb(stroke_color.a, stroke_color.r, stroke_color.g, stroke_color.b));
+                        canvas.draw_circle((center.x, center.y), *radius, &paint);
+                    }
+                }
+                DrawCommand::Line { from, to, color, width } => {
+                    let mut paint = Paint::default();
+                    paint.set_anti_alias(true);
+                    paint.set_stroke_width(*width);
+                    paint.set_color(skia_safe::Color::from_argb(color.a, color.r, color.g, color.b));
+                    canvas.draw_line((from.x, from.y), (to.x, to.y), &paint);
+                }
+                DrawCommand::FocusRing { bounds, corner_radii } => {
+                    let expanded = Rect {
+                        x: bounds.x - 2.0,
+                        y: bounds.y - 2.0,
+                        width: bounds.width + 4.0,
+                        height: bounds.height + 4.0,
+                    };
+                    let radii = crate::style::CornerRadii {
+                        top_left: corner_radii.top_left + 2.0,
+                        top_right: corner_radii.top_right + 2.0,
+                        bottom_right: corner_radii.bottom_right + 2.0,
+                        bottom_left: corner_radii.bottom_left + 2.0,
+                    };
+                    let rrect = to_rrect(&expanded, &radii);
+                    let mut paint = Paint::default();
+                    paint.set_anti_alias(true);
+                    paint.set_style(skia_safe::paint::Style::Stroke);
+                    paint.set_stroke_width(2.0);
+                    paint.set_color(skia_safe::Color::from_argb(200, 66, 133, 244));
+                    canvas.draw_rrect(rrect, &paint);
+                }
                 DrawCommand::RichText { spans, position, max_width, font_size, color,
                     font_family, font_weight, font_italic, line_height, text_align,
                     max_lines, text_overflow_ellipsis, letter_spacing, word_spacing, text_shadow } => {

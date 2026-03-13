@@ -68,7 +68,50 @@ Phase 2 (SVG path parser) is DONE:
 Remaining phases (3-7: vector SVG renderer, icon system, SVG filters, advanced, SVG DOM) are
 advanced features that can be implemented incrementally as needed. The core SVG improvements are done.
 
-**Plan 5 is DONE** (Tier 1 improvements + path parser). Next plan: **6-form-elements**.
+**Plan 5 is DONE** (Tier 1 improvements + path parser).
+
+### Plan 6-form-elements: IN PROGRESS
+Phase 1 (focus management additions) is DONE:
+- `disabled`, `read_only`, `error`, `label` fields on Element with builder methods
+- `indeterminate`, `loading`, `show_value`, `progress_color`, `track_color` form props
+- `FocusRing` DrawCommand variant for rendering 2px blue outline around focused elements
+- `Line` and `Circle` DrawCommand variants for form element rendering
+
+Phase 2 (enhanced text input) is DONE:
+- `TextInputVariant` enum (Text, Password, Email, Url, Search, Number, Tel)
+- Enhanced `TextInputState` with: selection anchor, undo/redo stacks, word boundary movement
+- Selection methods: `select_all()`, `select_left/right()`, `select_word_left/right()`, `select_to_start/end()`, `select_word_at()`
+- Word-level operations: `move_word_left/right()`, `delete_word_back()`, `delete_word_forward()`
+- Undo/redo: `undo()`, `redo()` with grouped edit entries
+- IME composition state: `composing`, `compose_text`, `compose_cursor`
+- Password reveal timer for mobile-style character flash
+- `password_input()` builder function
+
+Phase 3 (Button, Checkbox, Radio, Switch) is DONE:
+- `ElementKind::Button` with `ButtonVariant` (Primary, Secondary, Ghost, Danger)
+- `ElementKind::Checkbox` with checked/indeterminate state and label
+- `ElementKind::Radio` with selected, group, value, label
+- `ElementKind::Switch` with on/off state and label
+- Display list rendering: background colors, checkmark path, radio circle, switch track+thumb
+- Builder functions: `button()`, `checkbox()`, `radio()`, `switch()` with `label()`, `variant()`, `indeterminate()`
+
+Phase 4 (Slider) is DONE:
+- `ElementKind::Slider` with value, min, max, step
+- `ElementKind::RangeSlider` with low, high, min, max, step
+- Track rendering: filled/empty portions with rounded ends
+- Thumb rendering: white circle with shadow
+- Builder functions: `slider()`, `range_slider()`, `step()`, `show_value()`, `progress_color()`, `track_color()`
+
+Phase 5 (Progress Bar and Spinner) is DONE:
+- `ElementKind::Progress` with `ProgressVariant` (Bar, Circular)
+- Determinate bar: track + fill with rounded ends
+- Indeterminate bar: 30% width segment (animation handled by runtime)
+- Circular spinner: track circle + arc stroke
+- Builder functions: `progress()`, `progress_indeterminate()`, `spinner()`
+
+Remaining phases (6-12: popup infrastructure, select/dropdown, textarea, IME, color picker, date/time picker, file input) require popup surfaces or VM for Wayland integration. Core form elements are done.
+
+**Plan 6 Phases 1-5 are DONE.** Next plan: **7** (or remaining phases as needed).
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

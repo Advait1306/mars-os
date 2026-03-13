@@ -21,6 +21,42 @@ pub enum ElementKind {
     Divider { thickness: f32 },
     TextInput { value: String, placeholder: String },
     Shape { data: ShapeData },
+    Button {
+        label: String,
+        variant: ButtonVariant,
+    },
+    Checkbox {
+        checked: bool,
+        indeterminate: bool,
+        label: Option<String>,
+    },
+    Radio {
+        selected: bool,
+        group: String,
+        value: String,
+        label: Option<String>,
+    },
+    Switch {
+        on: bool,
+        label: Option<String>,
+    },
+    Slider {
+        value: f64,
+        min: f64,
+        max: f64,
+        step: Option<f64>,
+    },
+    RangeSlider {
+        low: f64,
+        high: f64,
+        min: f64,
+        max: f64,
+        step: Option<f64>,
+    },
+    Progress {
+        value: Option<f64>,
+        variant: ProgressVariant,
+    },
 }
 
 /// Data for a vector shape element.
@@ -71,6 +107,31 @@ pub enum ImageFit {
     Cover,
     Fill,
     ScaleDown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ButtonVariant {
+    Primary,
+    Secondary,
+    Ghost,
+    Danger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProgressVariant {
+    Bar,
+    Circular,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextInputVariant {
+    Text,
+    Password,
+    Email,
+    Url,
+    Search,
+    Number,
+    Tel,
 }
 
 pub struct Element {
@@ -255,6 +316,17 @@ pub struct Element {
     pub tab_index: Option<i32>,
     pub focus_trap: bool,
 
+    // Form element properties
+    pub disabled: bool,
+    pub read_only: bool,
+    pub error: Option<String>,
+    pub label: Option<String>,
+    pub indeterminate: bool,
+    pub loading: bool,
+    pub show_value: bool,
+    pub progress_color: Option<Color>,
+    pub track_color: Option<Color>,
+
     // Hit testing
     pub pointer_events: PointerEvents,
 }
@@ -412,6 +484,16 @@ impl Default for Element {
             focusable: None,
             tab_index: None,
             focus_trap: false,
+            // Form element properties
+            disabled: false,
+            read_only: false,
+            error: None,
+            label: None,
+            indeterminate: false,
+            loading: false,
+            show_value: false,
+            progress_color: None,
+            track_color: None,
             // Hit testing
             pointer_events: PointerEvents::Auto,
         }
@@ -572,6 +654,127 @@ pub fn text_input(value: &str) -> Element {
             placeholder: String::new(),
         },
         cursor: Some(CursorStyle::Text),
+        ..Default::default()
+    }
+}
+
+pub fn password_input(value: &str) -> Element {
+    Element {
+        kind: ElementKind::TextInput {
+            value: value.to_string(),
+            placeholder: String::new(),
+        },
+        cursor: Some(CursorStyle::Text),
+        ..Default::default()
+    }
+}
+
+pub fn button(label: &str) -> Element {
+    Element {
+        kind: ElementKind::Button {
+            label: label.to_string(),
+            variant: ButtonVariant::Primary,
+        },
+        cursor: Some(CursorStyle::Pointer),
+        ..Default::default()
+    }
+}
+
+pub fn checkbox(checked: bool) -> Element {
+    Element {
+        kind: ElementKind::Checkbox {
+            checked,
+            indeterminate: false,
+            label: None,
+        },
+        cursor: Some(CursorStyle::Pointer),
+        ..Default::default()
+    }
+}
+
+pub fn radio(selected: bool, group: &str, value: &str) -> Element {
+    Element {
+        kind: ElementKind::Radio {
+            selected,
+            group: group.to_string(),
+            value: value.to_string(),
+            label: None,
+        },
+        cursor: Some(CursorStyle::Pointer),
+        ..Default::default()
+    }
+}
+
+pub fn switch(on: bool) -> Element {
+    Element {
+        kind: ElementKind::Switch {
+            on,
+            label: None,
+        },
+        cursor: Some(CursorStyle::Pointer),
+        ..Default::default()
+    }
+}
+
+pub fn slider(value: f64, min: f64, max: f64) -> Element {
+    Element {
+        kind: ElementKind::Slider {
+            value,
+            min,
+            max,
+            step: None,
+        },
+        cursor: Some(CursorStyle::Pointer),
+        height: Some(Dim::Px(24.0)),
+        ..Default::default()
+    }
+}
+
+pub fn range_slider(low: f64, high: f64, min: f64, max: f64) -> Element {
+    Element {
+        kind: ElementKind::RangeSlider {
+            low,
+            high,
+            min,
+            max,
+            step: None,
+        },
+        cursor: Some(CursorStyle::Pointer),
+        height: Some(Dim::Px(24.0)),
+        ..Default::default()
+    }
+}
+
+pub fn progress(value: f64) -> Element {
+    Element {
+        kind: ElementKind::Progress {
+            value: Some(value.clamp(0.0, 1.0)),
+            variant: ProgressVariant::Bar,
+        },
+        height: Some(Dim::Px(6.0)),
+        ..Default::default()
+    }
+}
+
+pub fn progress_indeterminate() -> Element {
+    Element {
+        kind: ElementKind::Progress {
+            value: None,
+            variant: ProgressVariant::Bar,
+        },
+        height: Some(Dim::Px(6.0)),
+        ..Default::default()
+    }
+}
+
+pub fn spinner() -> Element {
+    Element {
+        kind: ElementKind::Progress {
+            value: None,
+            variant: ProgressVariant::Circular,
+        },
+        width: Some(Dim::Px(24.0)),
+        height: Some(Dim::Px(24.0)),
         ..Default::default()
     }
 }
@@ -1376,6 +1579,73 @@ impl Element {
     /// Tab/Shift+Tab will cycle only among focusable descendants.
     pub fn focus_trap(mut self) -> Self {
         self.focus_trap = true;
+        self
+    }
+
+    // === Form element properties ===
+
+    pub fn disabled(mut self, d: bool) -> Self {
+        self.disabled = d;
+        self
+    }
+    pub fn read_only(mut self, r: bool) -> Self {
+        self.read_only = r;
+        self
+    }
+    pub fn error(mut self, e: Option<&str>) -> Self {
+        self.error = e.map(|s| s.to_string());
+        self
+    }
+    pub fn label(mut self, text: &str) -> Self {
+        match &mut self.kind {
+            ElementKind::Checkbox { label, .. }
+            | ElementKind::Radio { label, .. }
+            | ElementKind::Switch { label, .. } => {
+                *label = Some(text.to_string());
+            }
+            _ => {
+                self.label = Some(text.to_string());
+            }
+        }
+        self
+    }
+    pub fn variant(mut self, v: ButtonVariant) -> Self {
+        if let ElementKind::Button { variant, .. } = &mut self.kind {
+            *variant = v;
+        }
+        self
+    }
+    pub fn indeterminate(mut self, i: bool) -> Self {
+        if let ElementKind::Checkbox { indeterminate, .. } = &mut self.kind {
+            *indeterminate = i;
+        } else {
+            self.indeterminate = i;
+        }
+        self
+    }
+    pub fn step(mut self, s: f64) -> Self {
+        match &mut self.kind {
+            ElementKind::Slider { step, .. } | ElementKind::RangeSlider { step, .. } => {
+                *step = Some(s);
+            }
+            _ => {}
+        }
+        self
+    }
+    pub fn show_value(mut self, on: bool) -> Self {
+        self.show_value = on;
+        self
+    }
+    pub fn progress_color(mut self, c: Color) -> Self {
+        self.progress_color = Some(c);
+        self
+    }
+    pub fn track_color(mut self, c: Color) -> Self {
+        self.track_color = Some(c);
+        self
+    }
+    pub fn loading(mut self, on: bool) -> Self {
+        self.loading = on;
         self
     }
 

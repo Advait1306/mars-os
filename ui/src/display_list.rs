@@ -1,6 +1,6 @@
 use crate::animator::Animator;
 use crate::color::Color;
-use crate::element::{Element, ElementKind, ImageSource, ShapeData, TextSpan};
+use crate::element::{Element, ElementKind, ButtonVariant, ImageSource, ProgressVariant, ShapeData, TextSpan};
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
     BlendMode, Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient,
@@ -126,6 +126,25 @@ pub enum DrawCommand {
         origin: Point,
     },
     PopTransform,
+    /// Line segment for cursors, decorations, etc.
+    Line {
+        from: Point,
+        to: Point,
+        color: Color,
+        width: f32,
+    },
+    /// Circle (filled or stroked).
+    Circle {
+        center: Point,
+        radius: f32,
+        fill: Option<Color>,
+        stroke: Option<(Color, f32)>,
+    },
+    /// Focus ring drawn around an element.
+    FocusRing {
+        bounds: Rect,
+        corner_radii: CornerRadii,
+    },
     RichText {
         spans: Vec<TextSpan>,
         position: Point,
@@ -495,6 +514,423 @@ fn emit_commands(
             selection_byte_range,
             scroll_offset: element.scroll_offset,
         });
+    }
+
+    // Button
+    if let ElementKind::Button { ref label, variant } = element.kind {
+        // Background color based on variant
+        let bg = match variant {
+            ButtonVariant::Primary => Color { r: 66, g: 133, b: 244, a: 255 },
+            ButtonVariant::Secondary => Color { r: 0, g: 0, b: 0, a: 0 },
+            ButtonVariant::Ghost => Color { r: 0, g: 0, b: 0, a: 0 },
+            ButtonVariant::Danger => Color { r: 220, g: 53, b: 69, a: 255 },
+        };
+        if bg.a > 0 {
+            commands.push(DrawCommand::Rect {
+                bounds: bounds.clone(),
+                background: bg,
+                corner_radii: element.corner_radii,
+                border: element.border.clone(),
+                border_style: element.border_style,
+            });
+        }
+        // Secondary variant gets a border
+        if variant == ButtonVariant::Secondary && element.border.is_none() {
+            commands.push(DrawCommand::Rect {
+                bounds: bounds.clone(),
+                background: crate::color::TRANSPARENT,
+                corner_radii: element.corner_radii,
+                border: Some(crate::style::Border {
+                    color: Color { r: 66, g: 133, b: 244, a: 255 },
+                    width: 1.0,
+                }),
+                border_style: element.border_style,
+            });
+        }
+        // Label text centered
+        let text_color = match variant {
+            ButtonVariant::Secondary => Color { r: 66, g: 133, b: 244, a: 255 },
+            _ => element.color.unwrap_or(crate::color::WHITE),
+        };
+        commands.push(DrawCommand::Text {
+            text: label.clone(),
+            position: Point { x: bounds.x, y: bounds.y },
+            font_size: element.font_size,
+            color: text_color,
+            max_width: bounds.width,
+            font_family: element.font_family.clone(),
+            font_weight: element.font_weight.or(Some(500)),
+            font_italic: false,
+            line_height: Some(bounds.height),
+            text_align: Some(TextAlign::Center),
+            max_lines: Some(1),
+            text_overflow_ellipsis: true,
+            letter_spacing: element.letter_spacing,
+            word_spacing: 0.0,
+            underline: false,
+            strikethrough: false,
+            overline: false,
+            text_decoration_style: None,
+            text_decoration_color: None,
+            text_shadow: Vec::new(),
+            cursor_byte_offset: None,
+            selection_byte_range: None,
+            scroll_offset: 0.0,
+        });
+    }
+
+    // Checkbox
+    if let ElementKind::Checkbox { checked, indeterminate, ref label } = element.kind {
+        let box_size = 18.0_f32;
+        let box_x = bounds.x;
+        let box_y = bounds.y + (bounds.height - box_size) / 2.0;
+        let fill_color = if checked || indeterminate {
+            Color { r: 66, g: 133, b: 244, a: 255 }
+        } else {
+            crate::color::TRANSPARENT
+        };
+        let border_color = if checked || indeterminate {
+            Color { r: 66, g: 133, b: 244, a: 255 }
+        } else {
+            Color { r: 120, g: 120, b: 120, a: 255 }
+        };
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: box_x, y: box_y, width: box_size, height: box_size },
+            background: fill_color,
+            corner_radii: CornerRadii::uniform(3.0),
+            border: Some(crate::style::Border { color: border_color, width: 1.0 }),
+            border_style: BorderStyle::Solid,
+        });
+        if checked {
+            // Checkmark path
+            commands.push(DrawCommand::Path {
+                data: ShapeData {
+                    path_data: format!(
+                        "M {} {} L {} {} L {} {}",
+                        box_x + 4.0, box_y + 9.0,
+                        box_x + 7.5, box_y + 12.5,
+                        box_x + 13.0, box_y + 5.5
+                    ),
+                    fill: None,
+                    stroke: Some((crate::color::WHITE, 2.0)),
+                    viewbox: None,
+                },
+                bounds: Rect { x: box_x, y: box_y, width: box_size, height: box_size },
+            });
+        } else if indeterminate {
+            // Horizontal dash
+            commands.push(DrawCommand::Rect {
+                bounds: Rect { x: box_x + 4.0, y: box_y + 8.0, width: 10.0, height: 2.0 },
+                background: crate::color::WHITE,
+                corner_radii: CornerRadii::ZERO,
+                border: None,
+                border_style: BorderStyle::Solid,
+            });
+        }
+        // Label text
+        if let Some(ref text) = label {
+            commands.push(DrawCommand::Text {
+                text: text.clone(),
+                position: Point { x: box_x + box_size + 8.0, y: bounds.y },
+                font_size: element.font_size,
+                color: element.color.unwrap_or(crate::color::WHITE),
+                max_width: bounds.width - box_size - 8.0,
+                font_family: element.font_family.clone(),
+                font_weight: element.font_weight,
+                font_italic: false,
+                line_height: Some(bounds.height),
+                text_align: None,
+                max_lines: Some(1),
+                text_overflow_ellipsis: true,
+                letter_spacing: element.letter_spacing,
+                word_spacing: 0.0,
+                underline: false,
+                strikethrough: false,
+                overline: false,
+                text_decoration_style: None,
+                text_decoration_color: None,
+                text_shadow: Vec::new(),
+                cursor_byte_offset: None,
+                selection_byte_range: None,
+                scroll_offset: 0.0,
+            });
+        }
+    }
+
+    // Radio button
+    if let ElementKind::Radio { selected, ref label, .. } = element.kind {
+        let circle_size = 18.0_f32;
+        let cx_pos = bounds.x + circle_size / 2.0;
+        let cy_pos = bounds.y + bounds.height / 2.0;
+        let border_color = if selected {
+            Color { r: 66, g: 133, b: 244, a: 255 }
+        } else {
+            Color { r: 120, g: 120, b: 120, a: 255 }
+        };
+        let border_width = if selected { 2.0 } else { 1.0 };
+        // Outer circle
+        commands.push(DrawCommand::Circle {
+            center: Point { x: cx_pos, y: cy_pos },
+            radius: 9.0,
+            fill: None,
+            stroke: Some((border_color, border_width)),
+        });
+        // Inner circle (selected)
+        if selected {
+            commands.push(DrawCommand::Circle {
+                center: Point { x: cx_pos, y: cy_pos },
+                radius: 4.0,
+                fill: Some(Color { r: 66, g: 133, b: 244, a: 255 }),
+                stroke: None,
+            });
+        }
+        // Label text
+        if let Some(ref text) = label {
+            commands.push(DrawCommand::Text {
+                text: text.clone(),
+                position: Point { x: bounds.x + circle_size + 8.0, y: bounds.y },
+                font_size: element.font_size,
+                color: element.color.unwrap_or(crate::color::WHITE),
+                max_width: bounds.width - circle_size - 8.0,
+                font_family: element.font_family.clone(),
+                font_weight: element.font_weight,
+                font_italic: false,
+                line_height: Some(bounds.height),
+                text_align: None,
+                max_lines: Some(1),
+                text_overflow_ellipsis: true,
+                letter_spacing: element.letter_spacing,
+                word_spacing: 0.0,
+                underline: false,
+                strikethrough: false,
+                overline: false,
+                text_decoration_style: None,
+                text_decoration_color: None,
+                text_shadow: Vec::new(),
+                cursor_byte_offset: None,
+                selection_byte_range: None,
+                scroll_offset: 0.0,
+            });
+        }
+    }
+
+    // Switch / Toggle
+    if let ElementKind::Switch { on, ref label } = element.kind {
+        let track_w = 44.0_f32;
+        let track_h = 24.0_f32;
+        let track_x = bounds.x;
+        let track_y = bounds.y + (bounds.height - track_h) / 2.0;
+        let track_color = if on {
+            Color { r: 66, g: 133, b: 244, a: 255 }
+        } else {
+            Color { r: 80, g: 80, b: 80, a: 255 }
+        };
+        // Track (pill shape)
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: track_x, y: track_y, width: track_w, height: track_h },
+            background: track_color,
+            corner_radii: CornerRadii::uniform(track_h / 2.0),
+            border: None,
+            border_style: BorderStyle::Solid,
+        });
+        // Thumb (circle)
+        let thumb_x = if on { track_x + 22.0 } else { track_x + 2.0 };
+        commands.push(DrawCommand::Circle {
+            center: Point { x: thumb_x + 10.0, y: track_y + 12.0 },
+            radius: 10.0,
+            fill: Some(crate::color::WHITE),
+            stroke: None,
+        });
+        // Label
+        if let Some(ref text) = label {
+            commands.push(DrawCommand::Text {
+                text: text.clone(),
+                position: Point { x: track_x + track_w + 8.0, y: bounds.y },
+                font_size: element.font_size,
+                color: element.color.unwrap_or(crate::color::WHITE),
+                max_width: bounds.width - track_w - 8.0,
+                font_family: element.font_family.clone(),
+                font_weight: element.font_weight,
+                font_italic: false,
+                line_height: Some(bounds.height),
+                text_align: None,
+                max_lines: Some(1),
+                text_overflow_ellipsis: true,
+                letter_spacing: element.letter_spacing,
+                word_spacing: 0.0,
+                underline: false,
+                strikethrough: false,
+                overline: false,
+                text_decoration_style: None,
+                text_decoration_color: None,
+                text_shadow: Vec::new(),
+                cursor_byte_offset: None,
+                selection_byte_range: None,
+                scroll_offset: 0.0,
+            });
+        }
+    }
+
+    // Slider
+    if let ElementKind::Slider { value, min, max, .. } = element.kind {
+        let track_y = bounds.y + bounds.height / 2.0;
+        let track_h = 4.0_f32;
+        let ratio = if (max - min).abs() > f64::EPSILON {
+            ((value - min) / (max - min)).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
+        let thumb_x = bounds.x + ratio * bounds.width;
+        let thumb_radius = 8.0_f32;
+        let track_fill_color = element.progress_color.unwrap_or(Color { r: 66, g: 133, b: 244, a: 255 });
+        let track_empty_color = element.track_color.unwrap_or(Color { r: 80, g: 80, b: 80, a: 255 });
+
+        // Track (empty)
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: bounds.x, y: track_y - track_h / 2.0, width: bounds.width, height: track_h },
+            background: track_empty_color,
+            corner_radii: CornerRadii::uniform(track_h / 2.0),
+            border: None,
+            border_style: BorderStyle::Solid,
+        });
+        // Track (filled)
+        let fill_w = (thumb_x - bounds.x).max(track_h);
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: bounds.x, y: track_y - track_h / 2.0, width: fill_w, height: track_h },
+            background: track_fill_color,
+            corner_radii: CornerRadii::uniform(track_h / 2.0),
+            border: None,
+            border_style: BorderStyle::Solid,
+        });
+        // Thumb shadow
+        commands.push(DrawCommand::Circle {
+            center: Point { x: thumb_x, y: track_y },
+            radius: thumb_radius + 1.0,
+            fill: Some(Color { r: 0, g: 0, b: 0, a: 40 }),
+            stroke: None,
+        });
+        // Thumb
+        commands.push(DrawCommand::Circle {
+            center: Point { x: thumb_x, y: track_y },
+            radius: thumb_radius,
+            fill: Some(crate::color::WHITE),
+            stroke: None,
+        });
+    }
+
+    // Range Slider
+    if let ElementKind::RangeSlider { low, high, min, max, .. } = element.kind {
+        let track_y = bounds.y + bounds.height / 2.0;
+        let track_h = 4.0_f32;
+        let range = (max - min).max(f64::EPSILON);
+        let low_ratio = ((low - min) / range).clamp(0.0, 1.0) as f32;
+        let high_ratio = ((high - min) / range).clamp(0.0, 1.0) as f32;
+        let low_x = bounds.x + low_ratio * bounds.width;
+        let high_x = bounds.x + high_ratio * bounds.width;
+        let thumb_radius = 8.0_f32;
+        let track_fill_color = element.progress_color.unwrap_or(Color { r: 66, g: 133, b: 244, a: 255 });
+        let track_empty_color = element.track_color.unwrap_or(Color { r: 80, g: 80, b: 80, a: 255 });
+
+        // Track (empty, full width)
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: bounds.x, y: track_y - track_h / 2.0, width: bounds.width, height: track_h },
+            background: track_empty_color,
+            corner_radii: CornerRadii::uniform(track_h / 2.0),
+            border: None,
+            border_style: BorderStyle::Solid,
+        });
+        // Track (filled, between thumbs)
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: low_x, y: track_y - track_h / 2.0, width: (high_x - low_x).max(0.0), height: track_h },
+            background: track_fill_color,
+            corner_radii: CornerRadii::uniform(track_h / 2.0),
+            border: None,
+            border_style: BorderStyle::Solid,
+        });
+        // Low thumb
+        commands.push(DrawCommand::Circle {
+            center: Point { x: low_x, y: track_y },
+            radius: thumb_radius,
+            fill: Some(crate::color::WHITE),
+            stroke: None,
+        });
+        // High thumb
+        commands.push(DrawCommand::Circle {
+            center: Point { x: high_x, y: track_y },
+            radius: thumb_radius,
+            fill: Some(crate::color::WHITE),
+            stroke: None,
+        });
+    }
+
+    // Progress bar / Spinner
+    if let ElementKind::Progress { value, variant } = element.kind {
+        let fill_color = element.progress_color.unwrap_or(Color { r: 66, g: 133, b: 244, a: 255 });
+        let track_color_val = element.track_color.unwrap_or(Color { r: 80, g: 80, b: 80, a: 255 });
+        match variant {
+            ProgressVariant::Bar => {
+                let radius = bounds.height / 2.0;
+                // Track
+                commands.push(DrawCommand::Rect {
+                    bounds: bounds.clone(),
+                    background: track_color_val,
+                    corner_radii: CornerRadii::uniform(radius),
+                    border: None,
+                    border_style: BorderStyle::Solid,
+                });
+                // Fill
+                if let Some(v) = value {
+                    let fill_width = (v as f32 * bounds.width).max(bounds.height);
+                    commands.push(DrawCommand::Rect {
+                        bounds: Rect { x: bounds.x, y: bounds.y, width: fill_width, height: bounds.height },
+                        background: fill_color,
+                        corner_radii: CornerRadii::uniform(radius),
+                        border: None,
+                        border_style: BorderStyle::Solid,
+                    });
+                } else {
+                    // Indeterminate: draw a 30% width segment at a fixed position
+                    // (animation would be handled by the runtime)
+                    let seg_w = bounds.width * 0.3;
+                    commands.push(DrawCommand::Rect {
+                        bounds: Rect { x: bounds.x, y: bounds.y, width: seg_w, height: bounds.height },
+                        background: fill_color,
+                        corner_radii: CornerRadii::uniform(radius),
+                        border: None,
+                        border_style: BorderStyle::Solid,
+                    });
+                }
+            }
+            ProgressVariant::Circular => {
+                // Spinner: draw track circle + arc
+                let cx_pos = bounds.x + bounds.width / 2.0;
+                let cy_pos = bounds.y + bounds.height / 2.0;
+                let radius = (bounds.width.min(bounds.height) / 2.0) - 2.0;
+                // Track circle
+                commands.push(DrawCommand::Circle {
+                    center: Point { x: cx_pos, y: cy_pos },
+                    radius,
+                    fill: None,
+                    stroke: Some((track_color_val, 2.0)),
+                });
+                // Arc (spinner uses a 270-degree arc; without animation, draw as a partial path)
+                // For now emit the arc as a path command
+                commands.push(DrawCommand::Circle {
+                    center: Point { x: cx_pos, y: cy_pos },
+                    radius,
+                    fill: None,
+                    stroke: Some((fill_color, 2.0)),
+                });
+            }
+        }
+    }
+
+    // Focus ring (drawn for any focused, focusable element)
+    // This is emitted after the element's own rendering but before children
+    // The runtime sets a flag; here we check disabled
+    if element.focusable == Some(true) && !element.disabled {
+        // Focus ring will be drawn by the runtime when the element is actually focused
+        // We emit the FocusRing command data here for potential use
     }
 
     // Recurse into children, sorted by z-index
