@@ -246,9 +246,29 @@ Theming system is DONE:
 - Views can override via `View::theme()` trait method
 - Per-element overrides still take precedence over theme
 
-Remaining phases (6: popup infrastructure, 9: IME, 10-12: color/date/file pickers) require popup surfaces or VM for Wayland integration.
+Phase 10 (Color Picker — pre-built) is DONE (partial):
+- `Hsv` struct with `to_color()`, `to_color_with_alpha()`, `hue_color()` methods
+- `Color::to_hsv()`, `Color::from_hsv()`, `Color::from_hsva()` conversions
+- `Color::to_hex()`, `Color::to_hsl()`, `Color::lerp()` utilities
+- `Color::luminance()`, `Color::is_dark()`, `Color::contrast_text()` for accessibility
+- `ElementKind::ColorPicker` with `color_picker()` builder
+- Closed-state rendering: color swatch + hex label + chevron
+- Remaining: popup surface with SV gradient, hue slider, alpha slider (needs VM)
 
-**Plan 6 Phases 1-8 + Theming are DONE.**
+Phase 11 (Date/Time Picker — pre-built) is DONE (partial):
+- `DatePickerVariant` enum (Date, Time, DateTime)
+- `ElementKind::DatePicker` with `date_picker()`, `time_picker()`, `datetime_picker()` builders
+- Closed-state rendering: formatted value or placeholder + calendar/clock icon
+- Remaining: popup calendar/time selector UI (needs VM)
+
+Phase 12 (File Input — pre-built) is DONE (partial):
+- `ElementKind::FileInput` with `file_input()` builder, `accept` filter, `multiple` flag
+- Closed-state rendering: "Choose File" button + file count label
+- Remaining: native file dialog integration via DBus/portal (needs VM)
+
+Remaining phases needing VM: Phase 6 (popup infrastructure), Phase 9 (IME protocol binding), popup portions of Phases 10-12.
+
+**Plan 6 Phases 1-8 + Theming + Phases 10-12 (pre-built) are DONE.**
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

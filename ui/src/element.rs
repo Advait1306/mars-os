@@ -74,6 +74,33 @@ pub enum ElementKind {
     SvgDocument {
         document: std::sync::Arc<std::sync::Mutex<crate::svg_render::SvgDocument>>,
     },
+    /// Color picker with swatch (closed) and HSV popup (open).
+    ColorPicker {
+        value: Color,
+    },
+    /// Date, time, or datetime picker.
+    DatePicker {
+        /// ISO format date string: "YYYY-MM-DD", "HH:MM", or "YYYY-MM-DD HH:MM".
+        value: Option<String>,
+        variant: DatePickerVariant,
+    },
+    /// File input (button + selected filename label).
+    FileInput {
+        /// Currently selected file paths.
+        files: Vec<String>,
+        /// MIME type filter (e.g., "image/*", "application/pdf").
+        accept: Option<String>,
+        /// Whether to allow multiple file selection.
+        multiple: bool,
+    },
+}
+
+/// Variant for date/time picker elements.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DatePickerVariant {
+    Date,
+    Time,
+    DateTime,
 }
 
 /// Data for a vector shape element.
@@ -737,6 +764,70 @@ pub fn svg_document(doc: crate::svg_render::SvgDocument) -> Element {
         },
         width: Some(w),
         height: Some(h),
+        ..Default::default()
+    }
+}
+
+/// Create a color picker element showing a swatch of the given color.
+pub fn color_picker(value: Color) -> Element {
+    Element {
+        kind: ElementKind::ColorPicker { value },
+        cursor: Some(CursorStyle::Pointer),
+        width: Some(36.0),
+        height: Some(36.0),
+        ..Default::default()
+    }
+}
+
+/// Create a date picker element.
+pub fn date_picker(value: Option<&str>) -> Element {
+    Element {
+        kind: ElementKind::DatePicker {
+            value: value.map(|s| s.to_string()),
+            variant: DatePickerVariant::Date,
+        },
+        width: Some(200.0),
+        height: Some(36.0),
+        ..Default::default()
+    }
+}
+
+/// Create a time picker element.
+pub fn time_picker(value: Option<&str>) -> Element {
+    Element {
+        kind: ElementKind::DatePicker {
+            value: value.map(|s| s.to_string()),
+            variant: DatePickerVariant::Time,
+        },
+        width: Some(120.0),
+        height: Some(36.0),
+        ..Default::default()
+    }
+}
+
+/// Create a datetime picker element.
+pub fn datetime_picker(value: Option<&str>) -> Element {
+    Element {
+        kind: ElementKind::DatePicker {
+            value: value.map(|s| s.to_string()),
+            variant: DatePickerVariant::DateTime,
+        },
+        width: Some(280.0),
+        height: Some(36.0),
+        ..Default::default()
+    }
+}
+
+/// Create a file input element.
+pub fn file_input() -> Element {
+    Element {
+        kind: ElementKind::FileInput {
+            files: Vec::new(),
+            accept: None,
+            multiple: false,
+        },
+        width: Some(200.0),
+        height: Some(36.0),
         ..Default::default()
     }
 }
