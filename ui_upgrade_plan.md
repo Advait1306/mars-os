@@ -253,6 +253,12 @@ Phase 10 (Color Picker — pre-built) is DONE (partial):
 - `Color::luminance()`, `Color::is_dark()`, `Color::contrast_text()` for accessibility
 - `ElementKind::ColorPicker` with `color_picker()` builder
 - Closed-state rendering: color swatch + hex label + chevron
+- `ColorPickerState` with full HSV state machine (open/close, SV drag, hue drag, alpha drag)
+- `ColorPickerDrag` enum for tracking active drag target
+- `parse_hex_color()` supporting #RGB, #RGBA, #RRGGBB, #RRGGBBAA
+- Hex input with live validation, commit/revert, sync-while-unfocused
+- Position query methods: `sv_position()`, `hue_position()`, `alpha_position()`
+- 26 unit tests covering state, drags, hex parsing, color roundtrips
 - Remaining: popup surface with SV gradient, hue slider, alpha slider (needs VM)
 
 Phase 11 (Date/Time Picker — pre-built) is DONE (partial):
