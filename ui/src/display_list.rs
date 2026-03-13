@@ -3,8 +3,8 @@ use crate::color::Color;
 use crate::element::{Element, ElementKind, ImageSource, TextSpan};
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
-    Border, BorderStyle, CornerRadii, DisplayMode, FullBorder, Gradient, Outline, TextAlign,
-    TextDecorationStyle,
+    Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient, Outline,
+    TextAlign, TextDecorationStyle,
 };
 
 #[derive(Debug, Clone)]
@@ -92,6 +92,15 @@ pub enum DrawCommand {
         opacity: f32,
     },
     PopLayer,
+    PushFilter {
+        filters: Vec<Filter>,
+    },
+    PopFilter,
+    ApplyBackdropFilter {
+        bounds: Rect,
+        corner_radii: CornerRadii,
+        filters: Vec<Filter>,
+    },
     BackdropBlur {
         bounds: Rect,
         corner_radii: CornerRadii,
@@ -170,6 +179,7 @@ fn emit_commands(
     let mut pop_translate = false;
     let mut pop_layer = false;
     let mut pop_clip = false;
+    let mut pop_filter = false;
 
     // Animation offset (translate)
     if let Some(ref ov) = overrides {
@@ -199,6 +209,23 @@ fn emit_commands(
             opacity: effective_opacity,
         });
         pop_layer = true;
+    }
+
+    // CSS filters (wrap entire element content)
+    if !element.filters.is_empty() {
+        commands.push(DrawCommand::PushFilter {
+            filters: element.filters.clone(),
+        });
+        pop_filter = true;
+    }
+
+    // Backdrop filters (applied to content behind this element)
+    if !element.backdrop_filters.is_empty() {
+        commands.push(DrawCommand::ApplyBackdropFilter {
+            bounds: bounds.clone(),
+            corner_radii: element.corner_radii,
+            filters: element.backdrop_filters.clone(),
+        });
     }
 
     // Outset box shadows (drawn behind the element)
@@ -421,6 +448,9 @@ fn emit_commands(
     }
 
     // Pop in reverse order of push
+    if pop_filter {
+        commands.push(DrawCommand::PopFilter);
+    }
     if pop_layer {
         commands.push(DrawCommand::PopLayer);
     }

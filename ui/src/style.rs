@@ -264,3 +264,23 @@ pub struct Outline {
     pub style: BorderStyle,
     pub offset: f32,
 }
+
+/// CSS filter functions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Filter {
+    Blur(f32),
+    Brightness(f32),
+    Contrast(f32),
+    Grayscale(f32),
+    HueRotate(f32), // degrees
+    Invert(f32),
+    Opacity(f32),
+    Saturate(f32),
+    Sepia(f32),
+    DropShadow {
+        x: f32,
+        y: f32,
+        blur: f32,
+        color: Color,
+    },
+}

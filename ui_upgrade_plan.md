@@ -27,7 +27,14 @@ Phase 2 (borders and outlines) is DONE:
 - Outline support (offset stroke outside element, does not affect layout)
 - Border style rendering: dashed via PathEffect::dash, dotted via round caps, double via two strokes
 
-The next phase to work on is **Phase 3** (CSS filters).
+Phase 3 (CSS filters) is DONE:
+- Filter enum with all CSS filter functions (blur, brightness, contrast, grayscale, sepia, hue-rotate, invert, opacity, saturate, drop-shadow)
+- PushFilter/PopFilter DrawCommands wrapping element content with chained ImageFilters
+- ApplyBackdropFilter for backdrop-filter support (blur and all color matrix filters)
+- Builder methods: filter_blur(), filter_brightness(), filter_contrast(), etc.
+- Chained filter composition via input parameter (each filter feeds into next)
+
+The next phase to work on is **Phase 4** (transforms).
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

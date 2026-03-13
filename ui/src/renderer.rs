@@ -79,6 +79,22 @@ impl SkiaRenderer {
                 DrawCommand::PopLayer => {
                     canvas.restore();
                 }
+                DrawCommand::PushFilter { filters } => {
+                    if let Some(filter) = build_image_filter(filters) {
+                        let mut paint = Paint::default();
+                        paint.set_image_filter(filter);
+                        let rec = SaveLayerRec::default().paint(&paint);
+                        canvas.save_layer(&rec);
+                    } else {
+                        canvas.save();
+                    }
+                }
+                DrawCommand::PopFilter => {
+                    canvas.restore();
+                }
+                DrawCommand::ApplyBackdropFilter { bounds, corner_radii, filters } => {
+                    self.draw_backdrop_filter(canvas, bounds, corner_radii, filters);
+                }
                 DrawCommand::BackdropBlur { bounds, corner_radii, blur_radius } => {
                     self.draw_backdrop_blur(canvas, bounds, corner_radii, *blur_radius);
                 }
@@ -784,6 +800,26 @@ impl SkiaRenderer {
 
         canvas.restore();
     }
+
+    fn draw_backdrop_filter(
+        &self,
+        canvas: &Canvas,
+        bounds: &Rect,
+        radii: &crate::style::CornerRadii,
+        filters: &[crate::style::Filter],
+    ) {
+        if let Some(filter) = build_image_filter(filters) {
+            canvas.save();
+            let rrect = to_rrect(bounds, radii);
+            canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+            let mut paint = Paint::default();
+            paint.set_image_filter(filter);
+            let rec = SaveLayerRec::default().paint(&paint);
+            canvas.save_layer(&rec);
+            canvas.restore();
+            canvas.restore();
+        }
+    }
 }
 
 /// Measure text using SkParagraph. Returns (width, height).
@@ -880,6 +916,132 @@ fn inset_rrect(bounds: &Rect, radii: &crate::style::CornerRadii, inset: f32) -> 
         bottom_left: (radii.bottom_left - inset).max(0.0),
     };
     to_rrect(&inset_bounds, &inset_radii)
+}
+
+/// Build a chained Skia ImageFilter from a list of CSS filter values.
+fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::ImageFilter> {
+    use skia_safe::color_filters;
+
+    let mut current: Option<skia_safe::ImageFilter> = None;
+
+    for f in filters {
+        current = match f {
+            crate::style::Filter::Blur(radius) => {
+                image_filters::blur((*radius, *radius), None, current, None)
+            }
+            crate::style::Filter::Brightness(amount) => {
+                let b = *amount;
+                let matrix: [f32; 20] = [
+                    b, 0.0, 0.0, 0.0, 0.0,
+                    0.0, b, 0.0, 0.0, 0.0,
+                    0.0, 0.0, b, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::Contrast(amount) => {
+                let c = *amount;
+                let t = (1.0 - c) / 2.0 * 255.0;
+                let matrix: [f32; 20] = [
+                    c, 0.0, 0.0, 0.0, t,
+                    0.0, c, 0.0, 0.0, t,
+                    0.0, 0.0, c, 0.0, t,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::Grayscale(amount) => {
+                let s = 1.0 - amount.clamp(0.0, 1.0);
+                let matrix: [f32; 20] = [
+                    0.2126 + 0.7874 * s, 0.7152 - 0.7152 * s, 0.0722 - 0.0722 * s, 0.0, 0.0,
+                    0.2126 - 0.2126 * s, 0.7152 + 0.2848 * s, 0.0722 - 0.0722 * s, 0.0, 0.0,
+                    0.2126 - 0.2126 * s, 0.7152 - 0.7152 * s, 0.0722 + 0.9278 * s, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::Sepia(amount) => {
+                let s = 1.0 - amount.clamp(0.0, 1.0);
+                let matrix: [f32; 20] = [
+                    0.393 + 0.607 * s, 0.769 - 0.769 * s, 0.189 - 0.189 * s, 0.0, 0.0,
+                    0.349 - 0.349 * s, 0.686 + 0.314 * s, 0.168 - 0.168 * s, 0.0, 0.0,
+                    0.272 - 0.272 * s, 0.534 - 0.534 * s, 0.131 + 0.869 * s, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::HueRotate(degrees) => {
+                let a = degrees.to_radians();
+                let cos_a = a.cos();
+                let sin_a = a.sin();
+                let matrix: [f32; 20] = [
+                    0.213 + 0.787 * cos_a - 0.213 * sin_a,
+                    0.715 - 0.715 * cos_a - 0.715 * sin_a,
+                    0.072 - 0.072 * cos_a + 0.928 * sin_a,
+                    0.0, 0.0,
+                    0.213 - 0.213 * cos_a + 0.143 * sin_a,
+                    0.715 + 0.285 * cos_a + 0.140 * sin_a,
+                    0.072 - 0.072 * cos_a - 0.283 * sin_a,
+                    0.0, 0.0,
+                    0.213 - 0.213 * cos_a - 0.787 * sin_a,
+                    0.715 - 0.715 * cos_a + 0.715 * sin_a,
+                    0.072 + 0.928 * cos_a + 0.072 * sin_a,
+                    0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::Invert(amount) => {
+                let i = *amount;
+                let matrix: [f32; 20] = [
+                    1.0 - 2.0 * i, 0.0, 0.0, 0.0, i * 255.0,
+                    0.0, 1.0 - 2.0 * i, 0.0, 0.0, i * 255.0,
+                    0.0, 0.0, 1.0 - 2.0 * i, 0.0, i * 255.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::Opacity(amount) => {
+                let o = *amount;
+                let matrix: [f32; 20] = [
+                    1.0, 0.0, 0.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0, o, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::Saturate(amount) => {
+                let s = *amount;
+                let matrix: [f32; 20] = [
+                    0.2126 + 0.7874 * s, 0.7152 - 0.7152 * s, 0.0722 - 0.0722 * s, 0.0, 0.0,
+                    0.2126 - 0.2126 * s, 0.7152 + 0.2848 * s, 0.0722 - 0.0722 * s, 0.0, 0.0,
+                    0.2126 - 0.2126 * s, 0.7152 - 0.7152 * s, 0.0722 + 0.9278 * s, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ];
+                let cf = color_filters::matrix_row_major(&matrix);
+                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+            }
+            crate::style::Filter::DropShadow { x, y, blur, color } => {
+                image_filters::drop_shadow(
+                    (*x, *y),
+                    (*blur, *blur),
+                    to_skia_color(color),
+                    current,
+                    None,
+                )
+            }
+        };
+    }
+
+    current
 }
 
 fn to_skia_color(c: &Color) -> skia_safe::Color {

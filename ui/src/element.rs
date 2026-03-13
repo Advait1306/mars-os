@@ -7,8 +7,8 @@ use crate::input::{
 };
 use crate::style::{
     AlignContent, Alignment, Border, BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim,
-    Direction, DisplayMode, FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement, Justify,
-    Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
+    Direction, DisplayMode, Filter, FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement,
+    Justify, Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
 };
 
 pub enum ElementKind {
@@ -116,6 +116,8 @@ pub struct Element {
     pub outline: Option<Outline>,
     pub box_shadows: Vec<BoxShadow>,
     pub opacity: f32,
+    pub filters: Vec<Filter>,
+    pub backdrop_filters: Vec<Filter>,
     pub clip: bool,
 
     // Text-specific
@@ -287,6 +289,8 @@ impl Default for Element {
             outline: None,
             box_shadows: Vec::new(),
             opacity: 1.0,
+            filters: Vec::new(),
+            backdrop_filters: Vec::new(),
             clip: false,
             font_size: 14.0,
             color: None,
@@ -870,6 +874,54 @@ impl Element {
     }
     pub fn opacity(mut self, o: f32) -> Self {
         self.opacity = o;
+        self
+    }
+    pub fn filter(mut self, f: Filter) -> Self {
+        self.filters.push(f);
+        self
+    }
+    pub fn filter_blur(mut self, radius: f32) -> Self {
+        self.filters.push(Filter::Blur(radius));
+        self
+    }
+    pub fn filter_brightness(mut self, amount: f32) -> Self {
+        self.filters.push(Filter::Brightness(amount));
+        self
+    }
+    pub fn filter_contrast(mut self, amount: f32) -> Self {
+        self.filters.push(Filter::Contrast(amount));
+        self
+    }
+    pub fn filter_grayscale(mut self, amount: f32) -> Self {
+        self.filters.push(Filter::Grayscale(amount));
+        self
+    }
+    pub fn filter_saturate(mut self, amount: f32) -> Self {
+        self.filters.push(Filter::Saturate(amount));
+        self
+    }
+    pub fn filter_sepia(mut self, amount: f32) -> Self {
+        self.filters.push(Filter::Sepia(amount));
+        self
+    }
+    pub fn filter_hue_rotate(mut self, degrees: f32) -> Self {
+        self.filters.push(Filter::HueRotate(degrees));
+        self
+    }
+    pub fn filter_invert(mut self, amount: f32) -> Self {
+        self.filters.push(Filter::Invert(amount));
+        self
+    }
+    pub fn filter_drop_shadow(mut self, x: f32, y: f32, blur: f32, color: Color) -> Self {
+        self.filters.push(Filter::DropShadow { x, y, blur, color });
+        self
+    }
+    pub fn backdrop_filter(mut self, f: Filter) -> Self {
+        self.backdrop_filters.push(f);
+        self
+    }
+    pub fn backdrop_blur(mut self, radius: f32) -> Self {
+        self.backdrop_filters.push(Filter::Blur(radius));
         self
     }
     pub fn clip(mut self) -> Self {
