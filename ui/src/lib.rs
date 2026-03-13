@@ -18,6 +18,7 @@ pub mod select_state;
 pub mod text_input_state;
 pub mod textarea_state;
 pub mod svg_render;
+pub mod icon_registry;
 pub mod theme;
 pub mod wayland;
 
@@ -38,6 +39,7 @@ pub use input::{
 pub use animation::{Animation, Easing, From, To};
 pub use select_state::{SelectOption, SelectGroup, SelectState};
 pub use theme::Theme;
+pub use icon_registry::{IconRegistry, IconPack, ResolvedIcon};
 
 /// Run a view as a Wayland application.
 pub fn run<V: View>(view: V, config: SurfaceConfig) {

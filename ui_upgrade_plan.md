@@ -115,10 +115,22 @@ Phase 3 (Tier 2 Vector SVG Renderer) is DONE:
 - Image fit support (Contain, Cover, Fill, ScaleDown) for vector SVGs
 - Tint support via SrcIn blend on layer
 
-Remaining phases (4-7: icon system, SVG filters, advanced features, SVG DOM) are
+Phase 4 (Icon System) is DONE:
+- `icon_registry.rs` module with `IconRegistry`, `IconPack`, `ResolvedIcon` types
+- Multi-tier icon resolution: inline SVG → icon packs → freedesktop themes → pixmaps fallback
+- `IconRegistry::register()` for inline SVG icons
+- `IconRegistry::register_pack()` and `register_pack_from_dir()` for icon pack loading
+- Freedesktop theme search across multiple sizes, categories, and themes (breeze-dark, hicolor)
+- `ElementKind::Icon` with `icon()` builder function (default 24x24)
+- `DrawCommand::Icon` resolved at render time via IconRegistry
+- Auto-selects vector SVG for .svg files, rasterized for .png
+- Tint and image fit support on icons
+- Gray placeholder for unresolved icons
+
+Remaining phases (5-7: SVG filters, advanced features, SVG DOM) are
 advanced features that can be implemented incrementally as needed.
 
-**Plan 5 Phases 1-3 are DONE** (Tier 1 + path parser + vector renderer).
+**Plan 5 Phases 1-4 are DONE** (Tier 1 + path parser + vector renderer + icon system).
 
 ### Plan 6-form-elements: IN PROGRESS
 Phase 1 (focus management additions) is DONE:

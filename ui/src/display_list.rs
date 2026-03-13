@@ -73,6 +73,13 @@ pub enum DrawCommand {
         tint: Option<Color>,
         image_fit: crate::element::ImageFit,
     },
+    /// A named icon resolved via IconRegistry at render time.
+    Icon {
+        name: String,
+        bounds: Rect,
+        tint: Option<Color>,
+        image_fit: crate::element::ImageFit,
+    },
     Path {
         data: ShapeData,
         bounds: Rect,
@@ -474,6 +481,16 @@ fn emit_commands(
     if let ElementKind::Image { ref source } = element.kind {
         commands.push(DrawCommand::Image {
             source: source.clone(),
+            bounds: bounds.clone(),
+            tint: element.tint,
+            image_fit: element.image_fit,
+        });
+    }
+
+    // Icon (named, resolved at render time via IconRegistry)
+    if let ElementKind::Icon { ref name } = element.kind {
+        commands.push(DrawCommand::Icon {
+            name: name.clone(),
             bounds: bounds.clone(),
             tint: element.tint,
             image_fit: element.image_fit,

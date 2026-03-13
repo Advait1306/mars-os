@@ -67,6 +67,9 @@ pub enum ElementKind {
         selected: Option<usize>,
         placeholder: String,
     },
+    Icon {
+        name: String,
+    },
 }
 
 /// Data for a vector shape element.
@@ -690,6 +693,19 @@ pub fn vector_svg_file(path: &str) -> Element {
         kind: ElementKind::Image {
             source: ImageSource::VectorSvg(format!("file:{}", path)),
         },
+        ..Default::default()
+    }
+}
+
+/// Create a named icon element resolved via the IconRegistry.
+/// Default size is 24x24 (Material Design standard).
+pub fn icon(name: &str) -> Element {
+    Element {
+        kind: ElementKind::Icon {
+            name: name.to_string(),
+        },
+        width: Some(24.0),
+        height: Some(24.0),
         ..Default::default()
     }
 }

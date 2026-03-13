@@ -23,6 +23,7 @@ pub struct SkiaRenderer {
     cache_total_bytes: usize,
     cache_max_bytes: usize,
     vector_svg_cache: HashMap<u64, crate::svg_render::VectorSvg>,
+    icon_registry: crate::icon_registry::IconRegistry,
 }
 
 impl SkiaRenderer {
@@ -35,6 +36,7 @@ impl SkiaRenderer {
             cache_total_bytes: 0,
             cache_max_bytes: 64 * 1024 * 1024, // 64 MB
             vector_svg_cache: HashMap::new(),
+            icon_registry: crate::icon_registry::IconRegistry::new(),
         }
     }
 
@@ -73,6 +75,9 @@ impl SkiaRenderer {
                 }
                 DrawCommand::Image { source, bounds, tint, image_fit } => {
                     self.draw_image(canvas, source, bounds, tint.as_ref(), *image_fit);
+                }
+                DrawCommand::Icon { name, bounds, tint, image_fit } => {
+                    self.draw_icon(canvas, name, bounds, tint.as_ref(), *image_fit);
                 }
                 DrawCommand::GradientRect { bounds, gradient, corner_radii } => {
                     self.draw_gradient_rect(canvas, bounds, gradient, corner_radii);
@@ -1037,6 +1042,58 @@ impl SkiaRenderer {
 
     pub fn font_collection(&self) -> FontCollection {
         self.font_collection.clone()
+    }
+
+    /// Get a mutable reference to the icon registry for registration.
+    pub fn icon_registry_mut(&mut self) -> &mut crate::icon_registry::IconRegistry {
+        &mut self.icon_registry
+    }
+
+    /// Get a reference to the icon registry.
+    pub fn icon_registry(&self) -> &crate::icon_registry::IconRegistry {
+        &self.icon_registry
+    }
+
+    fn draw_icon(
+        &mut self,
+        canvas: &Canvas,
+        name: &str,
+        bounds: &Rect,
+        tint: Option<&Color>,
+        image_fit: crate::element::ImageFit,
+    ) {
+        use crate::icon_registry::ResolvedIcon;
+        use crate::element::ImageSource;
+
+        let resolved = self.icon_registry.resolve(name);
+        match resolved {
+            Some(ResolvedIcon::Svg(svg_data)) => {
+                // Use vector SVG rendering for inline SVG data
+                let source = ImageSource::VectorSvg(svg_data);
+                self.draw_image(canvas, &source, bounds, tint, image_fit);
+            }
+            Some(ResolvedIcon::File(path)) => {
+                let path_str = path.to_string_lossy().to_string();
+                let source = if path_str.ends_with(".svg") {
+                    // Use vector SVG for SVG files
+                    ImageSource::VectorSvg(format!("file:{}", path_str))
+                } else {
+                    // Use rasterized path for PNG/other formats
+                    ImageSource::File(path_str)
+                };
+                self.draw_image(canvas, &source, bounds, tint, image_fit);
+            }
+            None => {
+                // Draw a placeholder: simple "?" icon or gray box
+                let mut paint = Paint::default();
+                paint.set_color(skia_safe::Color::from_argb(60, 128, 128, 128));
+                paint.set_anti_alias(true);
+                let skia_rect = skia_safe::Rect::from_xywh(
+                    bounds.x, bounds.y, bounds.width, bounds.height,
+                );
+                canvas.draw_rect(skia_rect, &paint);
+            }
+        }
     }
 
     fn draw_image(
