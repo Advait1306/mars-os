@@ -137,10 +137,21 @@ Phase 5 (SVG Filters) is DONE:
 - Applied via `SaveLayerRec` with `ImageFilter` paint in `render_group()`
 - Skipped: lighting filters (feDiffuseLighting/feSpecularLighting), feTurbulence, feImage, feConvolveMatrix, feDisplacementMap (uncommon in UI icons)
 
-Remaining phases (6-7: advanced features, SVG DOM) are
-advanced features that can be implemented incrementally as needed.
+Phase 6 (Advanced SVG Features — partial) is DONE:
+- **Masks**: `apply_mask()` renders mask content with `DstIn` blend mode
+  - Luminance masks convert RGB to alpha via color matrix filter
+  - Alpha masks use mask content alpha directly
+  - Nested/chained masks supported via recursion
+- **Patterns**: `usvg_paint_to_skia()` now renders pattern content into Skia `Picture`
+  - `Picture::to_shader()` with `TileMode::Repeat` for tiling
+  - Pattern transform applied via local matrix
+  - Replaces previous gray fallback
+- Text rendering from usvg was already done (flattened paths in Phase 3)
+- Remaining: multi-resolution caching/HiDPI, async loading (lower priority)
 
-**Plan 5 Phases 1-5 are DONE** (Tier 1 + path parser + vector renderer + icon system + filters).
+Remaining phase 7 (SVG DOM — Tier 3) is a large effort for dynamic SVG manipulation.
+
+**Plan 5 Phases 1-6 are DONE** (Tier 1 + path parser + vector renderer + icon system + filters + masks/patterns).
 
 ### Plan 6-form-elements: IN PROGRESS
 Phase 1 (focus management additions) is DONE:

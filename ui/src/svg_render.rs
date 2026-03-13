@@ -127,8 +127,9 @@ fn render_group(canvas: &Canvas, group: &usvg::Group) {
     let has_opacity = group.opacity().get() < 1.0;
     let filters = group.filters();
     let has_filters = !filters.is_empty();
+    let has_mask = group.mask().is_some();
 
-    if has_opacity || has_filters {
+    if has_opacity || has_filters || has_mask {
         let mut paint = Paint::default();
         if has_opacity {
             paint.set_alpha_f(group.opacity().get());
@@ -145,8 +146,13 @@ fn render_group(canvas: &Canvas, group: &usvg::Group) {
     // Render children
     render_node(canvas, group);
 
-    // Pop layer (opacity and/or filter)
-    if has_opacity || has_filters {
+    // Apply mask after rendering children (mask modulates content alpha)
+    if let Some(mask) = group.mask() {
+        apply_mask(canvas, mask);
+    }
+
+    // Pop layer (opacity and/or filter and/or mask)
+    if has_opacity || has_filters || has_mask {
         canvas.restore();
     }
 
@@ -339,12 +345,37 @@ fn usvg_paint_to_skia(paint: &usvg::Paint, opacity: usvg::Opacity) -> Option<Pai
             )?;
             p.set_shader(shader);
         }
-        usvg::Paint::Pattern(_) => {
-            // Pattern paint is complex; fall back to gray for now
-            p.set_color(skia_safe::Color::from_argb(
-                (opacity.get() * 255.0) as u8,
-                128, 128, 128,
-            ));
+        usvg::Paint::Pattern(pattern) => {
+            let rect = pattern.rect();
+            let tile_bounds = skia_safe::Rect::from_xywh(
+                rect.x(), rect.y(), rect.width(), rect.height(),
+            );
+
+            // Record pattern content into a Picture
+            let mut recorder = PictureRecorder::new();
+            {
+                let pattern_canvas = recorder.begin_recording(tile_bounds, None);
+                render_node(pattern_canvas, pattern.root());
+            }
+            if let Some(picture) = recorder.finish_recording_as_picture(Some(&tile_bounds)) {
+                let local_matrix = usvg_transform_to_matrix(pattern.transform());
+                let shader = picture.to_shader(
+                    Some((TileMode::Repeat, TileMode::Repeat)),
+                    skia_safe::FilterMode::Linear,
+                    Some(&local_matrix),
+                    Some(&tile_bounds),
+                );
+                p.set_shader(shader);
+                if opacity.get() < 1.0 {
+                    p.set_alpha_f(opacity.get());
+                }
+            } else {
+                // Fallback if picture recording fails
+                p.set_color(skia_safe::Color::from_argb(
+                    (opacity.get() * 255.0) as u8,
+                    128, 128, 128,
+                ));
+            }
         }
     }
 
@@ -399,6 +430,46 @@ fn build_clip_path(clip: &usvg::ClipPath) -> Option<Path> {
         None
     } else {
         Some(combined)
+    }
+}
+
+/// Apply an SVG mask to the current layer.
+///
+/// The mask content is rendered with DstIn blend mode, which keeps the
+/// destination (already-drawn content) only where the mask has opacity.
+/// For luminance masks, a color matrix converts RGB luminance to alpha first.
+fn apply_mask(canvas: &Canvas, mask: &usvg::Mask) {
+    let mut mask_paint = Paint::default();
+    mask_paint.set_blend_mode(skia_safe::BlendMode::DstIn);
+
+    // For luminance masks, convert RGB luminance to alpha
+    if mask.kind() == usvg::MaskType::Luminance {
+        let lum_matrix: [f32; 20] = [
+            0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0,
+            0.2126, 0.7152, 0.0722, 0.0, 0.0,
+        ];
+        let cf = skia_safe::color_filters::matrix_row_major(&lum_matrix, None);
+        let img_filter = skia_safe::image_filters::color_filter(
+            cf, None, skia_safe::image_filters::CropRect::NO_CROP_RECT,
+        );
+        if let Some(f) = img_filter {
+            mask_paint.set_image_filter(f);
+        }
+    }
+
+    let rec = SaveLayerRec::default().paint(&mask_paint);
+    canvas.save_layer(&rec);
+
+    // Render mask children
+    render_node(canvas, mask.root());
+
+    canvas.restore();
+
+    // Apply nested mask if present
+    if let Some(nested_mask) = mask.mask() {
+        apply_mask(canvas, nested_mask);
     }
 }
 
