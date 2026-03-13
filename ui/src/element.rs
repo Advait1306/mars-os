@@ -7,10 +7,10 @@ use crate::input::{
 };
 use crate::select_state::SelectOption;
 use crate::style::{
-    AlignContent, Alignment, Border, BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim,
-    Direction, DisplayMode, Filter, FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement,
-    BlendMode, Justify, Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
-    Transform,
+    AlignContent, Alignment, Background, BackgroundClip, BackgroundOrigin, Border, BorderImage,
+    BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim, Direction, DisplayMode, Filter,
+    FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement, BlendMode, Justify, Outline,
+    Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize, Transform,
 };
 
 pub enum ElementKind {
@@ -255,10 +255,14 @@ pub struct Element {
     // Visual props
     pub background: Option<Color>,
     pub gradient: Option<Gradient>,
+    pub backgrounds: Vec<Background>,
+    pub background_clip: BackgroundClip,
+    pub background_origin: BackgroundOrigin,
     pub corner_radii: CornerRadii,
     pub border: Option<Border>,
     pub border_style: BorderStyle,
     pub full_border: Option<FullBorder>,
+    pub border_image: Option<BorderImage>,
     pub outline: Option<Outline>,
     pub box_shadows: Vec<BoxShadow>,
     pub visible: bool,
@@ -471,10 +475,14 @@ impl Default for Element {
             // Visual
             background: None,
             gradient: None,
+            backgrounds: Vec::new(),
+            background_clip: BackgroundClip::default(),
+            background_origin: BackgroundOrigin::default(),
             corner_radii: CornerRadii::ZERO,
             border: None,
             border_style: BorderStyle::Solid,
             full_border: None,
+            border_image: None,
             outline: None,
             box_shadows: Vec::new(),
             visible: true,
@@ -1236,6 +1244,41 @@ impl Element {
     }
     pub fn background_gradient(mut self, gradient: Gradient) -> Self {
         self.gradient = Some(gradient);
+        self
+    }
+    /// Add a background layer (stacked bottom-to-top, first = bottommost).
+    pub fn add_background(mut self, bg: Background) -> Self {
+        self.backgrounds.push(bg);
+        self
+    }
+    /// Set background clip box (where background is visible).
+    pub fn background_clip(mut self, clip: BackgroundClip) -> Self {
+        self.background_clip = clip;
+        self
+    }
+    /// Set background origin (coordinate system for background positioning).
+    pub fn background_origin(mut self, origin: BackgroundOrigin) -> Self {
+        self.background_origin = origin;
+        self
+    }
+    /// Set a border image with nine-slice rendering.
+    pub fn border_image(mut self, source: impl Into<String>, slice: [f32; 4]) -> Self {
+        self.border_image = Some(BorderImage {
+            source: source.into(),
+            slice,
+            width: None,
+            fill: true,
+        });
+        self
+    }
+    /// Set a border image with custom width.
+    pub fn border_image_width(mut self, source: impl Into<String>, slice: [f32; 4], width: [f32; 4]) -> Self {
+        self.border_image = Some(BorderImage {
+            source: source.into(),
+            slice,
+            width: Some(width),
+            fill: true,
+        });
         self
     }
     pub fn rounded(mut self, r: f32) -> Self {

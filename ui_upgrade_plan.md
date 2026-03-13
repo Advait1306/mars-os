@@ -99,7 +99,15 @@ Phase 6 (remaining properties) is DONE:
 - BlendMode enum (16 CSS blend modes mapped to Skia) with PushBlendMode/PopBlendMode
 - Color utilities: `from_hex()`, `from_hsl()`, `from_hsla()`, `with_alpha()`, `lighter()`, `darker()`
 
-**Plan 4 is now COMPLETE.** All 6 phases implemented.
+Phase 7 (Polish and Optimization) is DONE:
+- **Multiple backgrounds**: `Background` enum (Solid/Gradient/Image) with `Vec<Background>` on Element, `add_background()` builder
+- **Background clip/origin**: `BackgroundClip` enum (BorderBox/PaddingBox/ContentBox), `BackgroundOrigin` enum, builders
+- **Border image**: `BorderImage` struct with nine-slice rendering via `draw_image_nine()`, `border_image()` and `border_image_width()` builders
+- **Gradient shader cache**: `HashMap<u64, Shader>` keyed by gradient+bounds hash, 256-entry cap, avoids redundant shader creation
+- **Image loading helper**: `load_image()` method extracted for reuse across border-image and background-image
+- `BackgroundLayers` and `BorderImage` DrawCommand variants with full renderer implementations
+
+**Plan 4 is now COMPLETE.** All 7 phases implemented.
 
 ### Plan 5-svg-rendering: IN PROGRESS
 Phase 1 (Tier 1 improvements) is DONE:

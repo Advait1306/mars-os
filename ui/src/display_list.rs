@@ -4,8 +4,9 @@ use crate::element::{Element, ElementKind, ButtonVariant, ImageSource, ProgressV
 use crate::select_state::SelectOption;
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
-    BlendMode, Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient,
-    Outline, TextAlign, TextDecorationStyle, TextDirection, Transform,
+    Background, BackgroundClip, BlendMode, Border, BorderImage, BorderStyle, CornerRadii,
+    DisplayMode, Filter, FullBorder, Gradient, Outline, TextAlign, TextDecorationStyle,
+    TextDirection, Transform,
 };
 use crate::theme::Theme;
 
@@ -155,6 +156,18 @@ pub enum DrawCommand {
         radius: f32,
         fill: Option<Color>,
         stroke: Option<(Color, f32)>,
+    },
+    /// Stacked background layers (drawn bottom-to-top).
+    BackgroundLayers {
+        bounds: Rect,
+        layers: Vec<Background>,
+        corner_radii: CornerRadii,
+        clip: BackgroundClip,
+    },
+    /// Nine-slice border image.
+    BorderImage {
+        bounds: Rect,
+        image: BorderImage,
     },
     /// Focus ring drawn around an element.
     FocusRing {
@@ -392,6 +405,24 @@ fn emit_commands(
             bounds: bounds.clone(),
             gradient: gradient.clone(),
             corner_radii: element.corner_radii,
+        });
+    }
+
+    // Multiple background layers (stacked on top of solid/gradient backgrounds)
+    if !element.backgrounds.is_empty() {
+        commands.push(DrawCommand::BackgroundLayers {
+            bounds: bounds.clone(),
+            layers: element.backgrounds.clone(),
+            corner_radii: element.corner_radii,
+            clip: element.background_clip,
+        });
+    }
+
+    // Border image (nine-slice, drawn on top of regular borders)
+    if let Some(ref bi) = element.border_image {
+        commands.push(DrawCommand::BorderImage {
+            bounds: bounds.clone(),
+            image: bi.clone(),
         });
     }
 

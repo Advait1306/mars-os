@@ -219,6 +219,63 @@ pub enum Gradient {
     },
 }
 
+/// A single background layer (solid, gradient, or image).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Background {
+    Solid(Color),
+    Gradient(Gradient),
+    Image {
+        source: String,
+    },
+}
+
+/// Controls where the background is painted relative to the box model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackgroundClip {
+    /// Paint within the border edge (default).
+    BorderBox,
+    /// Paint within the padding edge.
+    PaddingBox,
+    /// Paint within the content edge.
+    ContentBox,
+}
+
+impl Default for BackgroundClip {
+    fn default() -> Self {
+        BackgroundClip::BorderBox
+    }
+}
+
+/// Controls the origin for background positioning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackgroundOrigin {
+    /// Position relative to border box (default).
+    BorderBox,
+    /// Position relative to padding box.
+    PaddingBox,
+    /// Position relative to content box.
+    ContentBox,
+}
+
+impl Default for BackgroundOrigin {
+    fn default() -> Self {
+        BackgroundOrigin::PaddingBox
+    }
+}
+
+/// Border image with nine-slice rendering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BorderImage {
+    /// Image source path or data URI.
+    pub source: String,
+    /// Inset from each edge for the nine-slice (top, right, bottom, left) in pixels.
+    pub slice: [f32; 4],
+    /// Width of the border image area (top, right, bottom, left). If None, uses slice values.
+    pub width: Option<[f32; 4]>,
+    /// Whether to fill the center of the nine-slice.
+    pub fill: bool,
+}
+
 /// Box shadow definition (supports both outset and inset shadows).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoxShadow {

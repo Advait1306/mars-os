@@ -31,6 +31,7 @@ pub struct SkiaRenderer {
     vector_svg_cache: HashMap<u64, crate::svg_render::VectorSvg>,
     icon_registry: crate::icon_registry::IconRegistry,
     paragraph_cache: HashMap<u64, ParagraphCacheEntry>,
+    gradient_shader_cache: HashMap<u64, skia_safe::Shader>,
     frame_counter: u64,
 }
 
@@ -52,6 +53,7 @@ impl SkiaRenderer {
             vector_svg_cache: HashMap::new(),
             icon_registry: crate::icon_registry::IconRegistry::new(),
             paragraph_cache: HashMap::new(),
+            gradient_shader_cache: HashMap::new(),
             frame_counter: 0,
         }
     }
@@ -223,6 +225,12 @@ impl SkiaRenderer {
                     paint.set_stroke_width(*width);
                     paint.set_color(skia_safe::Color::from_argb(color.a, color.r, color.g, color.b));
                     canvas.draw_line((from.x, from.y), (to.x, to.y), &paint);
+                }
+                DrawCommand::BackgroundLayers { bounds, layers, corner_radii, clip } => {
+                    self.draw_background_layers(canvas, bounds, layers, corner_radii, clip);
+                }
+                DrawCommand::BorderImage { bounds, image } => {
+                    self.draw_border_image(canvas, bounds, image);
                 }
                 DrawCommand::FocusRing { bounds, corner_radii } => {
                     let expanded = Rect {
@@ -469,14 +477,194 @@ impl SkiaRenderer {
         }
     }
 
+    fn draw_background_layers(
+        &mut self,
+        canvas: &Canvas,
+        bounds: &Rect,
+        layers: &[crate::style::Background],
+        corner_radii: &crate::style::CornerRadii,
+        clip: &crate::style::BackgroundClip,
+    ) {
+        // Apply clip for background rendering
+        let clip_bounds = match clip {
+            crate::style::BackgroundClip::BorderBox => bounds.clone(),
+            crate::style::BackgroundClip::PaddingBox => {
+                // Inset by border width (approximate 1px if no info)
+                Rect {
+                    x: bounds.x + 1.0,
+                    y: bounds.y + 1.0,
+                    width: (bounds.width - 2.0).max(0.0),
+                    height: (bounds.height - 2.0).max(0.0),
+                }
+            }
+            crate::style::BackgroundClip::ContentBox => {
+                // Inset by border + padding (approximate)
+                Rect {
+                    x: bounds.x + 2.0,
+                    y: bounds.y + 2.0,
+                    width: (bounds.width - 4.0).max(0.0),
+                    height: (bounds.height - 4.0).max(0.0),
+                }
+            }
+        };
+
+        let needs_clip = !matches!(clip, crate::style::BackgroundClip::BorderBox);
+        if needs_clip {
+            canvas.save();
+            let rrect = to_rrect(&clip_bounds, corner_radii);
+            canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+        }
+
+        // Draw each layer bottom-to-top
+        for layer in layers {
+            match layer {
+                crate::style::Background::Solid(color) => {
+                    let rrect = to_rrect(bounds, corner_radii);
+                    let mut paint = Paint::default();
+                    paint.set_anti_alias(true);
+                    paint.set_color(to_skia_color(color));
+                    canvas.draw_rrect(rrect, &paint);
+                }
+                crate::style::Background::Gradient(gradient) => {
+                    self.draw_gradient_rect(canvas, bounds, gradient, corner_radii);
+                }
+                crate::style::Background::Image { source } => {
+                    let img_source = crate::element::ImageSource::File(source.clone());
+                    self.draw_image(canvas, &img_source, bounds, None, crate::element::ImageFit::Cover);
+                }
+            }
+        }
+
+        if needs_clip {
+            canvas.restore();
+        }
+    }
+
+    fn draw_border_image(
+        &mut self,
+        canvas: &Canvas,
+        bounds: &Rect,
+        border_image: &crate::style::BorderImage,
+    ) {
+        // Load the image via the image cache
+        let img_source = crate::element::ImageSource::File(border_image.source.clone());
+        let image = self.load_image(&img_source);
+        if let Some(image) = image {
+            let slice = &border_image.slice;
+            // Nine-slice center rect (in image coordinates)
+            let center = skia_safe::IRect::from_ltrb(
+                slice[3] as i32,       // left
+                slice[0] as i32,       // top
+                (image.width() as f32 - slice[1]) as i32,  // right
+                (image.height() as f32 - slice[2]) as i32, // bottom
+            );
+            let dst = skia_safe::Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height);
+            canvas.draw_image_nine(
+                &image,
+                &center,
+                dst,
+                skia_safe::FilterMode::Linear,
+                None,
+            );
+        }
+    }
+
+    /// Load an image from the image cache or from disk.
+    fn load_image(&mut self, source: &crate::element::ImageSource) -> Option<skia_safe::Image> {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        let key = {
+            let mut h = DefaultHasher::new();
+            match source {
+                crate::element::ImageSource::File(path) => path.hash(&mut h),
+                crate::element::ImageSource::Data(data) => data.hash(&mut h),
+                crate::element::ImageSource::VectorSvg(svg) => svg.hash(&mut h),
+            }
+            h.finish()
+        };
+
+        if let Some(entry) = self.image_cache.get(&key) {
+            return Some(entry.image.clone());
+        }
+
+        // Try to load the image
+        match source {
+            crate::element::ImageSource::File(path) => {
+                let data = std::fs::read(path).ok()?;
+                let sk_data = skia_safe::Data::new_copy(&data);
+                let image = skia_safe::Image::from_encoded(sk_data)?;
+                let byte_size = data.len();
+                self.image_cache.insert(key, CacheEntry {
+                    image: image.clone(),
+                    last_used: std::time::Instant::now(),
+                    byte_size,
+                });
+                self.cache_total_bytes += byte_size;
+                Some(image)
+            }
+            crate::element::ImageSource::Data(data) => {
+                let sk_data = skia_safe::Data::new_copy(data.as_bytes());
+                let image = skia_safe::Image::from_encoded(sk_data)?;
+                let byte_size = data.len();
+                self.image_cache.insert(key, CacheEntry {
+                    image: image.clone(),
+                    last_used: std::time::Instant::now(),
+                    byte_size,
+                });
+                self.cache_total_bytes += byte_size;
+                Some(image)
+            }
+            _ => None,
+        }
+    }
+
     fn draw_gradient_rect(
-        &self,
+        &mut self,
         canvas: &Canvas,
         bounds: &Rect,
         gradient: &crate::style::Gradient,
         radii: &crate::style::CornerRadii,
     ) {
         let rrect = to_rrect(bounds, radii);
+
+        // Check gradient shader cache (keyed by gradient definition + bounds)
+        let cache_key = {
+            use std::hash::{Hash, Hasher};
+            use std::collections::hash_map::DefaultHasher;
+            let mut h = DefaultHasher::new();
+            // Hash bounds
+            bounds.x.to_bits().hash(&mut h);
+            bounds.y.to_bits().hash(&mut h);
+            bounds.width.to_bits().hash(&mut h);
+            bounds.height.to_bits().hash(&mut h);
+            // Hash gradient type + params
+            std::mem::discriminant(gradient).hash(&mut h);
+            match gradient {
+                crate::style::Gradient::Linear { angle_deg, stops } => {
+                    angle_deg.to_bits().hash(&mut h);
+                    for s in stops { s.color.hash(&mut h); s.position.map(|p| p.to_bits()).hash(&mut h); }
+                }
+                crate::style::Gradient::Radial { center, stops } => {
+                    center.map(|(x, y)| (x.to_bits(), y.to_bits())).hash(&mut h);
+                    for s in stops { s.color.hash(&mut h); s.position.map(|p| p.to_bits()).hash(&mut h); }
+                }
+                crate::style::Gradient::Conic { center, from_angle_deg, stops } => {
+                    center.map(|(x, y)| (x.to_bits(), y.to_bits())).hash(&mut h);
+                    from_angle_deg.to_bits().hash(&mut h);
+                    for s in stops { s.color.hash(&mut h); s.position.map(|p| p.to_bits()).hash(&mut h); }
+                }
+            }
+            h.finish()
+        };
+
+        if let Some(cached_shader) = self.gradient_shader_cache.get(&cache_key) {
+            let mut paint = Paint::default();
+            paint.set_anti_alias(true);
+            paint.set_shader(cached_shader.clone());
+            canvas.draw_rrect(rrect, &paint);
+            return;
+        }
 
         // Resolve color stops: auto-distribute positions for stops without explicit position
         let resolve_stops = |stops: &[crate::style::ColorStop]| -> (Vec<skia_safe::Color>, Option<Vec<f32>>) {
@@ -579,6 +767,12 @@ impl SkiaRenderer {
         };
 
         if let Some(shader) = shader {
+            // Cache the shader for future reuse
+            self.gradient_shader_cache.insert(cache_key, shader.clone());
+            // Cap gradient cache at 256 entries
+            if self.gradient_shader_cache.len() > 256 {
+                self.gradient_shader_cache.clear();
+            }
             let mut paint = Paint::default();
             paint.set_anti_alias(true);
             paint.set_shader(shader);
