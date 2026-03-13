@@ -127,10 +127,20 @@ Phase 4 (Icon System) is DONE:
 - Tint and image fit support on icons
 - Gray placeholder for unresolved icons
 
-Remaining phases (5-7: SVG filters, advanced features, SVG DOM) are
+Phase 5 (SVG Filters) is DONE:
+- Full filter pipeline: `build_filters()` composes usvg filter chains into Skia `ImageFilter`s
+- Filter primitives mapped: GaussianBlur, Offset, ColorMatrix (matrix/saturate/hueRotate/luminanceToAlpha), ComponentTransfer, Composite (over/in/out/atop/xor/arithmetic), Blend (all 16 SVG modes), Morphology (erode/dilate), DropShadow, Flood, Merge, Tile
+- Named result tracking for cross-referenced filter inputs (`result`/`in` attributes)
+- SourceGraphic and SourceAlpha input resolution
+- Color matrix helpers: `saturate_matrix()`, `hue_rotate_matrix()`, `luminance_to_alpha_matrix()`
+- Transfer function table builder for all 5 types (identity, table, discrete, linear, gamma)
+- Applied via `SaveLayerRec` with `ImageFilter` paint in `render_group()`
+- Skipped: lighting filters (feDiffuseLighting/feSpecularLighting), feTurbulence, feImage, feConvolveMatrix, feDisplacementMap (uncommon in UI icons)
+
+Remaining phases (6-7: advanced features, SVG DOM) are
 advanced features that can be implemented incrementally as needed.
 
-**Plan 5 Phases 1-4 are DONE** (Tier 1 + path parser + vector renderer + icon system).
+**Plan 5 Phases 1-5 are DONE** (Tier 1 + path parser + vector renderer + icon system + filters).
 
 ### Plan 6-form-elements: IN PROGRESS
 Phase 1 (focus management additions) is DONE:

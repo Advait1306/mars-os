@@ -4,9 +4,11 @@
 //! normalized SVG tree directly to Skia canvas operations, avoiding the
 //! rasterization step used by the resvg pipeline.
 
+use std::collections::HashMap;
+
 use resvg::usvg;
 use skia_safe::{
-    Canvas, Paint, PaintStyle, Path, PathFillType, Matrix,
+    Canvas, Paint, PaintStyle, Path, PathFillType, Matrix, ImageFilter,
     canvas::SaveLayerRec, gradient_shader, TileMode,
     PictureRecorder,
 };
@@ -114,15 +116,6 @@ fn render_group(canvas: &Canvas, group: &usvg::Group) {
     let matrix = usvg_transform_to_matrix(ts);
     canvas.concat(&matrix);
 
-    // Apply opacity via layer
-    let has_opacity = group.opacity().get() < 1.0;
-    if has_opacity {
-        let mut paint = Paint::default();
-        paint.set_alpha_f(group.opacity().get());
-        let rec = SaveLayerRec::default().paint(&paint);
-        canvas.save_layer(&rec);
-    }
-
     // Apply clip-path
     if let Some(clip) = group.clip_path() {
         if let Some(clip_path) = build_clip_path(clip) {
@@ -130,11 +123,30 @@ fn render_group(canvas: &Canvas, group: &usvg::Group) {
         }
     }
 
+    // Determine if we need a layer for opacity and/or filters
+    let has_opacity = group.opacity().get() < 1.0;
+    let filters = group.filters();
+    let has_filters = !filters.is_empty();
+
+    if has_opacity || has_filters {
+        let mut paint = Paint::default();
+        if has_opacity {
+            paint.set_alpha_f(group.opacity().get());
+        }
+        if has_filters {
+            if let Some(image_filter) = build_filters(filters) {
+                paint.set_image_filter(image_filter);
+            }
+        }
+        let rec = SaveLayerRec::default().paint(&paint);
+        canvas.save_layer(&rec);
+    }
+
     // Render children
     render_node(canvas, group);
 
-    // Pop opacity layer
-    if has_opacity {
+    // Pop layer (opacity and/or filter)
+    if has_opacity || has_filters {
         canvas.restore();
     }
 
@@ -388,6 +400,388 @@ fn build_clip_path(clip: &usvg::ClipPath) -> Option<Path> {
     } else {
         Some(combined)
     }
+}
+
+// --- SVG Filter support ---
+
+/// Build a composed Skia ImageFilter from a list of usvg filters.
+/// Each filter contains a chain of primitives; we compose all of them.
+fn build_filters(filters: &[std::sync::Arc<usvg::filter::Filter>]) -> Option<ImageFilter> {
+    let mut result: Option<ImageFilter> = None;
+
+    for filter in filters {
+        // Build filter primitives, tracking named results for cross-references
+        let mut named_results: HashMap<String, ImageFilter> = HashMap::new();
+        let mut last_result: Option<ImageFilter> = None;
+
+        for primitive in filter.primitives() {
+            let built = build_filter_primitive(primitive, &named_results, &last_result);
+            if let Some(ref f) = built {
+                if !primitive.result().is_empty() {
+                    named_results.insert(primitive.result().to_string(), f.clone());
+                }
+                last_result = built;
+            }
+        }
+
+        // Compose multiple filters together
+        if let Some(filter_result) = last_result {
+            result = Some(match result {
+                Some(existing) => {
+                    skia_safe::image_filters::compose(filter_result, existing)
+                        .unwrap_or(existing)
+                }
+                None => filter_result,
+            });
+        }
+    }
+
+    result
+}
+
+/// Build a single filter primitive, resolving input references.
+fn build_filter_primitive(
+    primitive: &usvg::filter::Primitive,
+    named: &HashMap<String, ImageFilter>,
+    last: &Option<ImageFilter>,
+) -> Option<ImageFilter> {
+    use usvg::filter::*;
+
+    let crop = skia_safe::image_filters::CropRect::NO_CROP_RECT;
+
+    match primitive.kind() {
+        Kind::GaussianBlur(blur) => {
+            let input = resolve_input(blur.input(), named, last);
+            skia_safe::image_filters::blur(
+                (blur.std_dev_x().get(), blur.std_dev_y().get()),
+                TileMode::Decal,
+                input,
+                crop,
+            )
+        }
+
+        Kind::Offset(offset) => {
+            let input = resolve_input(offset.input(), named, last);
+            skia_safe::image_filters::offset(
+                (offset.dx(), offset.dy()),
+                input,
+                crop,
+            )
+        }
+
+        Kind::ColorMatrix(cm) => {
+            let input = resolve_input(cm.input(), named, last);
+            let color_filter = match cm.kind() {
+                ColorMatrixKind::Matrix(values) => {
+                    // 20-element row-major 4x5 matrix
+                    if values.len() == 20 {
+                        let mut arr = [0.0f32; 20];
+                        arr.copy_from_slice(values);
+                        Some(skia_safe::color_filters::matrix_row_major(&arr, None))
+                    } else {
+                        None
+                    }
+                }
+                ColorMatrixKind::Saturate(s) => {
+                    let mat = saturate_matrix(s.get());
+                    Some(skia_safe::color_filters::matrix_row_major(&mat, None))
+                }
+                ColorMatrixKind::HueRotate(deg) => {
+                    let mat = hue_rotate_matrix(*deg);
+                    Some(skia_safe::color_filters::matrix_row_major(&mat, None))
+                }
+                ColorMatrixKind::LuminanceToAlpha => {
+                    let mat = luminance_to_alpha_matrix();
+                    Some(skia_safe::color_filters::matrix_row_major(&mat, None))
+                }
+            };
+            color_filter.and_then(|cf| skia_safe::image_filters::color_filter(cf, input, crop))
+        }
+
+        Kind::ComponentTransfer(ct) => {
+            let input = resolve_input(ct.input(), named, last);
+            let r_table = build_transfer_table(ct.func_r());
+            let g_table = build_transfer_table(ct.func_g());
+            let b_table = build_transfer_table(ct.func_b());
+            let a_table = build_transfer_table(ct.func_a());
+            let cf = skia_safe::color_filters::table_argb(&a_table, &r_table, &g_table, &b_table);
+            cf.and_then(|cf| skia_safe::image_filters::color_filter(cf, input, crop))
+        }
+
+        Kind::Composite(comp) => {
+            let bg = resolve_input(comp.input2(), named, last);
+            let fg = resolve_input(comp.input1(), named, last);
+            match comp.operator() {
+                CompositeOperator::Over => {
+                    skia_safe::image_filters::blend(skia_safe::BlendMode::SrcOver, bg, fg, crop)
+                }
+                CompositeOperator::In => {
+                    skia_safe::image_filters::blend(skia_safe::BlendMode::SrcIn, bg, fg, crop)
+                }
+                CompositeOperator::Out => {
+                    skia_safe::image_filters::blend(skia_safe::BlendMode::SrcOut, bg, fg, crop)
+                }
+                CompositeOperator::Atop => {
+                    skia_safe::image_filters::blend(skia_safe::BlendMode::SrcATop, bg, fg, crop)
+                }
+                CompositeOperator::Xor => {
+                    skia_safe::image_filters::blend(skia_safe::BlendMode::Xor, bg, fg, crop)
+                }
+                CompositeOperator::Arithmetic { k1, k2, k3, k4 } => {
+                    skia_safe::image_filters::arithmetic(*k1, *k2, *k3, *k4, true, bg, fg, crop)
+                }
+            }
+        }
+
+        Kind::Blend(blend) => {
+            let bg = resolve_input(blend.input2(), named, last);
+            let fg = resolve_input(blend.input1(), named, last);
+            let mode = usvg_blend_to_skia(blend.mode());
+            skia_safe::image_filters::blend(mode, bg, fg, crop)
+        }
+
+        Kind::Morphology(morph) => {
+            let input = resolve_input(morph.input(), named, last);
+            match morph.operator() {
+                MorphologyOperator::Erode => {
+                    skia_safe::image_filters::erode(
+                        (morph.radius_x().get(), morph.radius_y().get()),
+                        input,
+                        crop,
+                    )
+                }
+                MorphologyOperator::Dilate => {
+                    skia_safe::image_filters::dilate(
+                        (morph.radius_x().get(), morph.radius_y().get()),
+                        input,
+                        crop,
+                    )
+                }
+            }
+        }
+
+        Kind::DropShadow(ds) => {
+            let input = resolve_input(ds.input(), named, last);
+            let color = skia_safe::Color4f::new(
+                ds.color().red as f32 / 255.0,
+                ds.color().green as f32 / 255.0,
+                ds.color().blue as f32 / 255.0,
+                ds.opacity().get(),
+            );
+            skia_safe::image_filters::drop_shadow(
+                (ds.dx(), ds.dy()),
+                (ds.std_dev_x().get(), ds.std_dev_y().get()),
+                color,
+                None,
+                input,
+                crop,
+            )
+        }
+
+        Kind::Flood(flood) => {
+            let color = skia_safe::Color::from_argb(
+                (flood.opacity().get() * 255.0) as u8,
+                flood.color().red,
+                flood.color().green,
+                flood.color().blue,
+            );
+            let cf = skia_safe::color_filters::blend(color, skia_safe::BlendMode::Src);
+            cf.and_then(|cf| skia_safe::image_filters::color_filter(cf, None, crop))
+        }
+
+        Kind::Merge(merge) => {
+            let filters: Vec<Option<ImageFilter>> = merge
+                .inputs()
+                .iter()
+                .map(|input| resolve_input(input, named, last))
+                .collect();
+            skia_safe::image_filters::merge(filters, crop)
+        }
+
+        Kind::Tile(tile) => {
+            let input = resolve_input(tile.input(), named, last);
+            let prim_rect = primitive.rect();
+            let src_rect = skia_safe::Rect::from_xywh(
+                prim_rect.x(), prim_rect.y(), prim_rect.width(), prim_rect.height(),
+            );
+            skia_safe::image_filters::tile(src_rect, src_rect, input)
+        }
+
+        Kind::Turbulence(turb) => {
+            // Turbulence is a source filter (no input) - use shader
+            // Skia doesn't have fractal noise as image filter directly,
+            // so we skip this for now (uncommon in icon SVGs)
+            None
+        }
+
+        Kind::Image(_) => {
+            // feImage requires rendering embedded content - skip for now
+            None
+        }
+
+        Kind::ConvolveMatrix(_) => {
+            // Complex convolution - skip for now (uncommon in UI icons)
+            None
+        }
+
+        Kind::DisplacementMap(_) => {
+            // Displacement map - skip for now (uncommon in UI icons)
+            None
+        }
+
+        // Lighting filters - skip as planned
+        Kind::DiffuseLighting(_) | Kind::SpecularLighting(_) => None,
+    }
+}
+
+/// Resolve a filter input reference to a Skia ImageFilter.
+fn resolve_input(
+    input: &usvg::filter::Input,
+    named: &HashMap<String, ImageFilter>,
+    last: &Option<ImageFilter>,
+) -> Option<ImageFilter> {
+    match input {
+        usvg::filter::Input::SourceGraphic => None, // None means "use source"
+        usvg::filter::Input::SourceAlpha => {
+            // Extract alpha channel from source (zero out RGB, keep alpha)
+            let mat: [f32; 20] = [
+                0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ];
+            let cf = skia_safe::color_filters::matrix_row_major(&mat, None);
+            skia_safe::image_filters::color_filter(cf, None, skia_safe::image_filters::CropRect::NO_CROP_RECT)
+        }
+        usvg::filter::Input::Reference(name) => {
+            named.get(name).cloned().or_else(|| last.clone())
+        }
+    }
+}
+
+/// Map usvg BlendMode to Skia BlendMode.
+fn usvg_blend_to_skia(mode: usvg::BlendMode) -> skia_safe::BlendMode {
+    match mode {
+        usvg::BlendMode::Normal => skia_safe::BlendMode::SrcOver,
+        usvg::BlendMode::Multiply => skia_safe::BlendMode::Multiply,
+        usvg::BlendMode::Screen => skia_safe::BlendMode::Screen,
+        usvg::BlendMode::Overlay => skia_safe::BlendMode::Overlay,
+        usvg::BlendMode::Darken => skia_safe::BlendMode::Darken,
+        usvg::BlendMode::Lighten => skia_safe::BlendMode::Lighten,
+        usvg::BlendMode::ColorDodge => skia_safe::BlendMode::ColorDodge,
+        usvg::BlendMode::ColorBurn => skia_safe::BlendMode::ColorBurn,
+        usvg::BlendMode::HardLight => skia_safe::BlendMode::HardLight,
+        usvg::BlendMode::SoftLight => skia_safe::BlendMode::SoftLight,
+        usvg::BlendMode::Difference => skia_safe::BlendMode::Difference,
+        usvg::BlendMode::Exclusion => skia_safe::BlendMode::Exclusion,
+        usvg::BlendMode::Hue => skia_safe::BlendMode::Hue,
+        usvg::BlendMode::Saturation => skia_safe::BlendMode::Saturation,
+        usvg::BlendMode::Color => skia_safe::BlendMode::Color,
+        usvg::BlendMode::Luminosity => skia_safe::BlendMode::Luminosity,
+    }
+}
+
+// --- Color matrix helpers ---
+
+/// Build a 4x5 saturation matrix (SVG feColorMatrix type="saturate").
+fn saturate_matrix(s: f32) -> [f32; 20] {
+    [
+        0.2126 + 0.7874 * s, 0.7152 - 0.7152 * s, 0.0722 - 0.0722 * s, 0.0, 0.0,
+        0.2126 - 0.2126 * s, 0.7152 + 0.2848 * s, 0.0722 - 0.0722 * s, 0.0, 0.0,
+        0.2126 - 0.2126 * s, 0.7152 - 0.7152 * s, 0.0722 + 0.9278 * s, 0.0, 0.0,
+        0.0,                 0.0,                  0.0,                  1.0, 0.0,
+    ]
+}
+
+/// Build a 4x5 hue rotation matrix (SVG feColorMatrix type="hueRotate").
+fn hue_rotate_matrix(degrees: f32) -> [f32; 20] {
+    let rad = degrees * std::f32::consts::PI / 180.0;
+    let cos = rad.cos();
+    let sin = rad.sin();
+
+    [
+        0.213 + cos * 0.787 - sin * 0.213,
+        0.715 - cos * 0.715 - sin * 0.715,
+        0.072 - cos * 0.072 + sin * 0.928,
+        0.0, 0.0,
+        0.213 - cos * 0.213 + sin * 0.143,
+        0.715 + cos * 0.285 + sin * 0.140,
+        0.072 - cos * 0.072 - sin * 0.283,
+        0.0, 0.0,
+        0.213 - cos * 0.213 - sin * 0.787,
+        0.715 - cos * 0.715 + sin * 0.715,
+        0.072 + cos * 0.928 + sin * 0.072,
+        0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ]
+}
+
+/// Build a 4x5 luminance-to-alpha matrix.
+fn luminance_to_alpha_matrix() -> [f32; 20] {
+    [
+        0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0,
+        0.2126, 0.7152, 0.0722, 0.0, 0.0,
+    ]
+}
+
+/// Build a 256-entry lookup table from a TransferFunction.
+fn build_transfer_table(func: &usvg::filter::TransferFunction) -> [u8; 256] {
+    use usvg::filter::TransferFunction;
+    let mut table = [0u8; 256];
+
+    match func {
+        TransferFunction::Identity => {
+            for i in 0..256 {
+                table[i] = i as u8;
+            }
+        }
+        TransferFunction::Table(values) => {
+            if values.is_empty() {
+                for i in 0..256 {
+                    table[i] = i as u8;
+                }
+            } else {
+                let n = values.len() - 1;
+                for i in 0..256 {
+                    let pos = (i as f32 / 255.0) * n as f32;
+                    let idx = (pos as usize).min(n - 1);
+                    let frac = pos - idx as f32;
+                    let val = values[idx] * (1.0 - frac) + values[idx + 1] * frac;
+                    table[i] = (val.clamp(0.0, 1.0) * 255.0) as u8;
+                }
+            }
+        }
+        TransferFunction::Discrete(values) => {
+            if values.is_empty() {
+                for i in 0..256 {
+                    table[i] = i as u8;
+                }
+            } else {
+                let n = values.len();
+                for i in 0..256 {
+                    let idx = ((i as f32 / 255.0) * n as f32) as usize;
+                    let idx = idx.min(n - 1);
+                    table[i] = (values[idx].clamp(0.0, 1.0) * 255.0) as u8;
+                }
+            }
+        }
+        TransferFunction::Linear { slope, intercept } => {
+            for i in 0..256 {
+                let val = slope * (i as f32 / 255.0) + intercept;
+                table[i] = (val.clamp(0.0, 1.0) * 255.0) as u8;
+            }
+        }
+        TransferFunction::Gamma { amplitude, exponent, offset } => {
+            for i in 0..256 {
+                let val = amplitude * (i as f32 / 255.0).powf(*exponent) + offset;
+                table[i] = (val.clamp(0.0, 1.0) * 255.0) as u8;
+            }
+        }
+    }
+
+    table
 }
 
 fn compute_vector_fit(
