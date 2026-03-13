@@ -255,7 +255,7 @@ fn emit_commands(
         .as_ref()
         .and_then(|k| animator.map(|a| a.get_overrides(k)));
 
-    let bounds = if let Some(ref ov) = overrides {
+    let bounds = if let Some(ov) = &overrides {
         Rect {
             x: ov.layout_x.unwrap_or(node.bounds.x),
             y: ov.layout_y.unwrap_or(node.bounds.y),
@@ -266,7 +266,7 @@ fn emit_commands(
         node.bounds.clone()
     };
 
-    let effective_opacity = if let Some(ref ov) = overrides {
+    let effective_opacity = if let Some(ov) = &overrides {
         ov.opacity.unwrap_or(element.opacity)
     } else {
         element.opacity
@@ -281,7 +281,7 @@ fn emit_commands(
     let mut pop_filter = false;
 
     // Animation offset (translate)
-    if let Some(ref ov) = overrides {
+    if let Some(ov) = &overrides {
         if ov.offset_x.abs() > 0.001 || ov.offset_y.abs() > 0.001 {
             commands.push(DrawCommand::PushTranslate {
                 offset: Point {
@@ -398,7 +398,7 @@ fn emit_commands(
     }
 
     // Per-side borders
-    if let Some(ref full_border) = element.full_border {
+    if let Some(full_border) = &element.full_border {
         commands.push(DrawCommand::PerSideBorder {
             bounds: bounds.clone(),
             corner_radii: element.corner_radii,
@@ -407,7 +407,7 @@ fn emit_commands(
     }
 
     // Gradient (drawn on top of solid background, under children)
-    if let Some(ref gradient) = element.gradient {
+    if let Some(gradient) = &element.gradient {
         commands.push(DrawCommand::GradientRect {
             bounds: bounds.clone(),
             gradient: gradient.clone(),
@@ -426,7 +426,7 @@ fn emit_commands(
     }
 
     // Border image (nine-slice, drawn on top of regular borders)
-    if let Some(ref bi) = element.border_image {
+    if let Some(bi) = &element.border_image {
         commands.push(DrawCommand::BorderImage {
             bounds: bounds.clone(),
             image: bi.clone(),
@@ -451,7 +451,7 @@ fn emit_commands(
     }
 
     // Text
-    if let ElementKind::Text { ref content } = element.kind {
+    if let ElementKind::Text { content } = &element.kind {
         commands.push(DrawCommand::Text {
             text: content.clone(),
             position: Point {
@@ -488,7 +488,7 @@ fn emit_commands(
     }
 
     // Rich Text
-    if let ElementKind::RichText { ref spans } = element.kind {
+    if let ElementKind::RichText { spans } = &element.kind {
         commands.push(DrawCommand::RichText {
             spans: spans.clone(),
             position: Point {
@@ -516,7 +516,7 @@ fn emit_commands(
     }
 
     // Image
-    if let ElementKind::Image { ref source } = element.kind {
+    if let ElementKind::Image { source } = &element.kind {
         commands.push(DrawCommand::Image {
             source: source.clone(),
             bounds: bounds.clone(),
@@ -526,7 +526,7 @@ fn emit_commands(
     }
 
     // Icon (named, resolved at render time via IconRegistry)
-    if let ElementKind::Icon { ref name } = element.kind {
+    if let ElementKind::Icon { name } = &element.kind {
         commands.push(DrawCommand::Icon {
             name: name.clone(),
             bounds: bounds.clone(),
@@ -536,7 +536,7 @@ fn emit_commands(
     }
 
     // SVG Document (dynamic)
-    if let ElementKind::SvgDocument { ref document } = element.kind {
+    if let ElementKind::SvgDocument { document } = &element.kind {
         commands.push(DrawCommand::SvgDocument {
             document: document.clone(),
             bounds: bounds.clone(),
@@ -546,7 +546,7 @@ fn emit_commands(
     }
 
     // Shape (vector path)
-    if let ElementKind::Shape { ref data } = element.kind {
+    if let ElementKind::Shape { data } = &element.kind {
         commands.push(DrawCommand::Path {
             data: data.clone(),
             bounds: bounds.clone(),
@@ -554,7 +554,7 @@ fn emit_commands(
     }
 
     // TextInput
-    if let ElementKind::TextInput { ref value, ref placeholder } = element.kind {
+    if let ElementKind::TextInput { value, placeholder } = &element.kind {
         // Build display text, potentially with preedit text inserted at cursor
         let has_preedit = element.preedit_text.as_ref().map_or(false, |t| !t.is_empty());
         let (display_text, preedit_byte_range) = if has_preedit {
@@ -653,6 +653,8 @@ fn emit_commands(
             text_shadow: element.text_shadow.clone(),
             font_features: element.font_features.clone(),
             font_variations: element.font_variations.clone(),
+            text_direction: element.text_direction,
+            locale: element.locale.clone(),
             cursor_byte_offset,
             selection_byte_range,
             scroll_offset: element.scroll_offset,
@@ -661,7 +663,7 @@ fn emit_commands(
     }
 
     // Textarea
-    if let ElementKind::Textarea { ref value, ref placeholder } = element.kind {
+    if let ElementKind::Textarea { value, placeholder } = &element.kind {
         let display_text = if value.is_empty() { placeholder } else { value };
         let text_color = if value.is_empty() {
             let base = element.color.unwrap_or(theme.text);
@@ -731,7 +733,8 @@ fn emit_commands(
     }
 
     // Button
-    if let ElementKind::Button { ref label, variant } = element.kind {
+    if let ElementKind::Button { label, variant } = &element.kind {
+        let variant = *variant;
         // Background color based on variant
         let bg = match variant {
             ButtonVariant::Primary => theme.primary,
@@ -799,7 +802,9 @@ fn emit_commands(
     }
 
     // Checkbox
-    if let ElementKind::Checkbox { checked, indeterminate, ref label } = element.kind {
+    if let ElementKind::Checkbox { checked, indeterminate, label } = &element.kind {
+        let checked = *checked;
+        let indeterminate = *indeterminate;
         let box_size = 18.0_f32;
         let box_x = bounds.x;
         let box_y = bounds.y + (bounds.height - box_size) / 2.0;
@@ -847,7 +852,7 @@ fn emit_commands(
             });
         }
         // Label text
-        if let Some(ref text) = label {
+        if let Some(text) = label {
             commands.push(DrawCommand::Text {
                 text: text.clone(),
                 position: Point { x: box_x + box_size + 8.0, y: bounds.y },
@@ -882,7 +887,8 @@ fn emit_commands(
     }
 
     // Radio button
-    if let ElementKind::Radio { selected, ref label, .. } = element.kind {
+    if let ElementKind::Radio { selected, label, .. } = &element.kind {
+        let selected = *selected;
         let circle_size = 18.0_f32;
         let cx_pos = bounds.x + circle_size / 2.0;
         let cy_pos = bounds.y + bounds.height / 2.0;
@@ -909,7 +915,7 @@ fn emit_commands(
             });
         }
         // Label text
-        if let Some(ref text) = label {
+        if let Some(text) = label {
             commands.push(DrawCommand::Text {
                 text: text.clone(),
                 position: Point { x: bounds.x + circle_size + 8.0, y: bounds.y },
@@ -944,7 +950,8 @@ fn emit_commands(
     }
 
     // Switch / Toggle
-    if let ElementKind::Switch { on, ref label } = element.kind {
+    if let ElementKind::Switch { on, label } = &element.kind {
+        let on = *on;
         let track_w = 44.0_f32;
         let track_h = 24.0_f32;
         let track_x = bounds.x;
@@ -971,7 +978,7 @@ fn emit_commands(
             stroke: None,
         });
         // Label
-        if let Some(ref text) = label {
+        if let Some(text) = label {
             commands.push(DrawCommand::Text {
                 text: text.clone(),
                 position: Point { x: track_x + track_w + 8.0, y: bounds.y },
@@ -1006,7 +1013,8 @@ fn emit_commands(
     }
 
     // Slider
-    if let ElementKind::Slider { value, min, max, .. } = element.kind {
+    if let ElementKind::Slider { value, min, max, .. } = &element.kind {
+        let (value, min, max) = (*value, *min, *max);
         let track_y = bounds.y + bounds.height / 2.0;
         let track_h = 4.0_f32;
         let ratio = if (max - min).abs() > f64::EPSILON {
@@ -1053,7 +1061,8 @@ fn emit_commands(
     }
 
     // Range Slider
-    if let ElementKind::RangeSlider { low, high, min, max, .. } = element.kind {
+    if let ElementKind::RangeSlider { low, high, min, max, .. } = &element.kind {
+        let (low, high, min, max) = (*low, *high, *min, *max);
         let track_y = bounds.y + bounds.height / 2.0;
         let track_h = 4.0_f32;
         let range = (max - min).max(f64::EPSILON);
@@ -1098,7 +1107,8 @@ fn emit_commands(
     }
 
     // Progress bar / Spinner
-    if let ElementKind::Progress { value, variant } = element.kind {
+    if let ElementKind::Progress { value, variant } = &element.kind {
+        let (value, variant) = (*value, *variant);
         let fill_color = element.progress_color.unwrap_or(theme.progress_fill);
         let track_color_val = element.track_color.unwrap_or(theme.progress_track);
         match variant {
@@ -1160,12 +1170,13 @@ fn emit_commands(
     }
 
     // Select / Dropdown
-    if let ElementKind::Select { ref options, selected, ref placeholder } = element.kind {
-        emit_select(element, &bounds, options, selected, placeholder, theme, commands);
+    if let ElementKind::Select { options, selected, placeholder } = &element.kind {
+        emit_select(element, &bounds, options, *selected, placeholder, theme, commands);
     }
 
     // Color picker (closed state: swatch showing current color)
-    if let ElementKind::ColorPicker { value } = element.kind {
+    if let ElementKind::ColorPicker { value } = &element.kind {
+        let value = *value;
         // Swatch: rounded square showing the current color
         commands.push(DrawCommand::Rect {
             bounds: bounds.clone(),
@@ -1184,7 +1195,8 @@ fn emit_commands(
     }
 
     // Date/time picker (closed state: input showing formatted value)
-    if let ElementKind::DatePicker { ref value, variant } = element.kind {
+    if let ElementKind::DatePicker { value, variant } = &element.kind {
+        let variant = *variant;
         let bg = element.background.unwrap_or(theme.input_bg);
         let border_color = if element.error.is_some() { theme.danger } else { theme.input_border };
 
@@ -1270,7 +1282,7 @@ fn emit_commands(
     }
 
     // File input (button + filename label)
-    if let ElementKind::FileInput { ref files, ref accept, multiple } = element.kind {
+    if let ElementKind::FileInput { files, accept, multiple } = &element.kind {
         let bg = element.background.unwrap_or(theme.primary);
 
         // Button area
@@ -1379,7 +1391,7 @@ fn emit_commands(
     emit_children_sorted(node, element, animator, theme, commands);
 
     // Outline (drawn on top of children, outside the element box)
-    if let Some(ref outline) = element.outline {
+    if let Some(outline) = &element.outline {
         commands.push(DrawCommand::Outline {
             bounds: bounds.clone(),
             corner_radii: element.corner_radii,

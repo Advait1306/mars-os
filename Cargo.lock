@@ -1383,6 +1383,7 @@ dependencies = [
  "calloop-wayland-source 0.4.1",
  "env_logger",
  "image",
+ "libc",
  "log",
  "resvg",
  "skia-safe",

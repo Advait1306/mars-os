@@ -282,7 +282,7 @@ impl EventState {
             let pe = PointerEvent::from_move(x, y, self.buttons, self.modifiers);
             let mut needs_redraw = false;
             if let Some(element) = get_element_by_preorder(root_element, capture_idx) {
-                if let Some(ref handler) = element.on_pointer_move {
+                if let Some(handler) = &element.on_pointer_move {
                     handler(&pe);
                     needs_redraw = true;
                 }
@@ -318,11 +318,11 @@ impl EventState {
         for &idx in &self.hovered {
             if !new_set.contains(&idx) {
                 if let Some(element) = get_element_by_preorder(root_element, idx) {
-                    if let Some(ref handler) = element.on_pointer_leave {
+                    if let Some(handler) = &element.on_pointer_leave {
                         handler(&pe);
                         needs_redraw = true;
                     }
-                    if let Some(ref handler) = element.on_hover {
+                    if let Some(handler) = &element.on_hover {
                         handler(false);
                         needs_redraw = true;
                     }
@@ -334,11 +334,11 @@ impl EventState {
         for &idx in &new_hovered {
             if !old_set.contains(&idx) {
                 if let Some(element) = get_element_by_preorder(root_element, idx) {
-                    if let Some(ref handler) = element.on_pointer_enter {
+                    if let Some(handler) = &element.on_pointer_enter {
                         handler(&pe);
                         needs_redraw = true;
                     }
-                    if let Some(ref handler) = element.on_hover {
+                    if let Some(handler) = &element.on_hover {
                         handler(true);
                         needs_redraw = true;
                     }
@@ -360,7 +360,7 @@ impl EventState {
         self.hovered = new_hovered;
 
         // Dispatch PointerMove through three-phase propagation
-        if let Some(ref hit_result) = hit {
+        if let Some(hit_result) = &hit {
             if !hit_result.path.is_empty() {
                 let result = dispatch_pointer_event_three_phase(
                     &pe,
@@ -436,7 +436,7 @@ impl EventState {
             if old_target != new_target {
                 if let Some(old_idx) = old_target {
                     if let Some(element) = get_element_by_preorder(root_element, old_idx) {
-                        if let Some(ref handler) = element.on_drag_leave {
+                        if let Some(handler) = &element.on_drag_leave {
                             let drag_event = DragEvent {
                                 x,
                                 y,
@@ -453,7 +453,7 @@ impl EventState {
                 // DragEnter on new target
                 if let Some(new_idx) = new_target {
                     if let Some(element) = get_element_by_preorder(root_element, new_idx) {
-                        if let Some(ref handler) = element.on_drag_enter {
+                        if let Some(handler) = &element.on_drag_enter {
                             let drag_event = DragEvent {
                                 x,
                                 y,
@@ -473,7 +473,7 @@ impl EventState {
             // DragOver on current target (fires repeatedly during drag)
             if let Some(target_idx) = new_target {
                 if let Some(element) = get_element_by_preorder(root_element, target_idx) {
-                    if let Some(ref handler) = element.on_drag_over {
+                    if let Some(handler) = &element.on_drag_over {
                         let mut drag_event = DragEvent {
                             x,
                             y,
@@ -496,7 +496,7 @@ impl EventState {
                 let (bx, bw) = self.slider_drag_bounds;
                 match &element.kind {
                     crate::element::ElementKind::Slider { min, max, step, .. } => {
-                        if let Some(ref handler) = element.on_float_change {
+                        if let Some(handler) = &element.on_float_change {
                             let val = slider_value_from_x(x, bx, bw, *min, *max, *step);
                             handler(val);
                             needs_redraw = true;
@@ -505,7 +505,7 @@ impl EventState {
                     crate::element::ElementKind::RangeSlider {
                         low, high, min, max, step, ..
                     } => {
-                        if let Some(ref handler) = element.on_range_change {
+                        if let Some(handler) = &element.on_range_change {
                             let click_val = slider_value_from_x(x, bx, bw, *min, *max, *step);
                             let dist_low = (click_val - low).abs();
                             let dist_high = (click_val - high).abs();
@@ -528,7 +528,7 @@ impl EventState {
         if self.dragging {
             if let Some(pressed_idx) = self.pressed_element {
                 if let Some(element) = get_element_by_preorder(root_element, pressed_idx) {
-                    if let Some(ref handler) = element.on_drag {
+                    if let Some(handler) = &element.on_drag {
                         if let Some((px, py)) = self.press_pos {
                             handler(x - px, y - py);
                             needs_redraw = true;
@@ -567,7 +567,7 @@ impl EventState {
         let mut needs_redraw = false;
 
         // Three-phase dispatch of PointerDown
-        if let Some(ref hit_result) = hit {
+        if let Some(hit_result) = &hit {
             if !hit_result.path.is_empty() {
                 let (handled, default_prevented) = dispatch_pointer_event_three_phase_full(
                     &pe,
@@ -614,7 +614,7 @@ impl EventState {
                                 {
                                     self.slider_dragging = Some(pressed_idx);
                                     self.slider_drag_bounds = (bx, bw);
-                                    if let Some(ref handler) = element.on_float_change {
+                                    if let Some(handler) = &element.on_float_change {
                                         let val = slider_value_from_x(x, bx, bw, *min, *max, *step);
                                         handler(val);
                                         needs_redraw = true;
@@ -629,7 +629,7 @@ impl EventState {
                                 {
                                     self.slider_dragging = Some(pressed_idx);
                                     self.slider_drag_bounds = (bx, bw);
-                                    if let Some(ref handler) = element.on_range_change {
+                                    if let Some(handler) = &element.on_range_change {
                                         // Move the nearest thumb
                                         let click_val = slider_value_from_x(x, bx, bw, *min, *max, *step);
                                         let dist_low = (click_val - low).abs();
@@ -674,7 +674,7 @@ impl EventState {
 
         // Three-phase dispatch of PointerUp
         let hit = hit_test(layout, root_element, x, y);
-        if let Some(ref hit_result) = hit {
+        if let Some(hit_result) = &hit {
             if !hit_result.path.is_empty() {
                 if dispatch_pointer_event_three_phase(
                     &pe,
@@ -694,7 +694,7 @@ impl EventState {
             // Fire Drop on current drag-over target
             if let Some(over_idx) = self.dnd_over_element {
                 if let Some(element) = get_element_by_preorder(root_element, over_idx) {
-                    if let Some(ref handler) = element.on_drop {
+                    if let Some(handler) = &element.on_drop {
                         let drag_event = DragEvent {
                             x,
                             y,
@@ -719,7 +719,7 @@ impl EventState {
             // Fire DragEnd on the source element
             if let Some(source_idx) = self.dnd_source {
                 if let Some(element) = get_element_by_preorder(root_element, source_idx) {
-                    if let Some(ref handler) = element.on_drag_start {
+                    if let Some(handler) = &element.on_drag_start {
                         // DragEnd is informational; we reuse on_drag_start to keep it simple.
                         // The source can check drop_effect to know if the drop was accepted.
                         // In a more complete implementation, we'd have a separate on_drag_end handler.
@@ -780,7 +780,7 @@ impl EventState {
                             };
 
                             // Dispatch Click through three-phase
-                            if let Some(ref hit_result) = hit {
+                            if let Some(hit_result) = &hit {
                                 if dispatch_click_event_three_phase(
                                     &click_event,
                                     &hit_result.path,
@@ -801,7 +801,7 @@ impl EventState {
 
                             // Fire DoubleClick if count == 2
                             if self.click_count == 2 {
-                                if let Some(ref hit_result) = hit {
+                                if let Some(hit_result) = &hit {
                                     if dispatch_double_click_event(
                                         &click_event,
                                         &hit_result.path,
@@ -814,7 +814,7 @@ impl EventState {
                         }
                         MouseButton::Right => {
                             // ContextMenu on right-click release
-                            if let Some(ref hit_result) = hit {
+                            if let Some(hit_result) = &hit {
                                 if dispatch_context_menu_event(
                                     &pe,
                                     &hit_result.path,
@@ -834,7 +834,7 @@ impl EventState {
                                 modifiers: self.modifiers,
                                 pointer_type: PointerType::Mouse,
                             };
-                            if let Some(ref hit_result) = hit {
+                            if let Some(hit_result) = &hit {
                                 if dispatch_click_event_three_phase(
                                     &click_event,
                                     &hit_result.path,
@@ -916,7 +916,7 @@ impl EventState {
             if !stopped {
                 let target = path_root_to_target[target_idx];
                 if let Some(element) = get_element_by_preorder(root_element, target) {
-                    if let Some(ref handler) = element.on_wheel {
+                    if let Some(handler) = &element.on_wheel {
                         let r = handler(&wheel_event);
                         apply_event_result(r, &mut stopped, &mut default_prevented);
                     }
@@ -930,7 +930,7 @@ impl EventState {
                         break;
                     }
                     if let Some(element) = get_element_by_preorder(root_element, idx) {
-                        if let Some(ref handler) = element.on_wheel {
+                        if let Some(handler) = &element.on_wheel {
                             let r = handler(&wheel_event);
                             apply_event_result(r, &mut stopped, &mut default_prevented);
                         }
@@ -945,7 +945,7 @@ impl EventState {
             // Legacy on_scroll: bubble up path until handled
             for &idx in &result.path {
                 if let Some(element) = get_element_by_preorder(root_element, idx) {
-                    if let Some(ref handler) = element.on_scroll {
+                    if let Some(handler) = &element.on_scroll {
                         handler(delta_x, delta_y);
                         return true;
                     }
@@ -977,7 +977,7 @@ impl EventState {
             // Fire on_scroll_end on the target, then bubble up
             for &idx in &result.path {
                 if let Some(element) = get_element_by_preorder(root_element, idx) {
-                    if let Some(ref handler) = element.on_scroll_end {
+                    if let Some(handler) = &element.on_scroll_end {
                         handler(&scroll_end_event);
                         return true;
                     }
@@ -997,7 +997,7 @@ impl EventState {
             // Fire DragLeave on current over-element
             if let Some(over_idx) = self.dnd_over_element {
                 if let Some(element) = get_element_by_preorder(root_element, over_idx) {
-                    if let Some(ref handler) = element.on_drag_leave {
+                    if let Some(handler) = &element.on_drag_leave {
                         let drag_event = DragEvent {
                             x: self.pointer_x,
                             y: self.pointer_y,
@@ -1026,10 +1026,10 @@ impl EventState {
 
         for &idx in &self.hovered {
             if let Some(element) = get_element_by_preorder(root_element, idx) {
-                if let Some(ref handler) = element.on_pointer_leave {
+                if let Some(handler) = &element.on_pointer_leave {
                     handler(&pe);
                 }
-                if let Some(ref handler) = element.on_hover {
+                if let Some(handler) = &element.on_hover {
                     handler(false);
                 }
             }
@@ -1056,10 +1056,10 @@ impl EventState {
                 related_target: new_focus,
             };
             if let Some(element) = get_element_by_preorder(root_element, old_idx) {
-                if let Some(ref handler) = element.on_blur {
+                if let Some(handler) = &element.on_blur {
                     handler(&focus_event);
                 }
-                if let Some(ref handler) = element.on_focus_out {
+                if let Some(handler) = &element.on_focus_out {
                     handler(&focus_event);
                 }
             }
@@ -1073,10 +1073,10 @@ impl EventState {
                 related_target: old_focus,
             };
             if let Some(element) = get_element_by_preorder(root_element, new_idx) {
-                if let Some(ref handler) = element.on_focus {
+                if let Some(handler) = &element.on_focus {
                     handler(&focus_event);
                 }
-                if let Some(ref handler) = element.on_focus_in {
+                if let Some(handler) = &element.on_focus_in {
                     handler(&focus_event);
                 }
             }
@@ -1158,7 +1158,7 @@ impl EventState {
         }
 
         // Space/Enter activates focused form elements (button, checkbox, switch, radio)
-        if matches!(key_value, KeyValue::Character(ref c) if c == " ")
+        if matches!(&key_value, KeyValue::Character(c) if c == " ")
             || matches!(key_value, KeyValue::Enter)
         {
             if let Some(focused_idx) = self.focused {
@@ -1193,13 +1193,13 @@ impl EventState {
                             KeyValue::ArrowRight | KeyValue::ArrowUp => Some(1),
                             KeyValue::ArrowLeft | KeyValue::ArrowDown => Some(-1),
                             KeyValue::Home => {
-                                if let Some(ref handler) = element.on_float_change {
+                                if let Some(handler) = &element.on_float_change {
                                     handler(*min);
                                 }
                                 return true;
                             }
                             KeyValue::End => {
-                                if let Some(ref handler) = element.on_float_change {
+                                if let Some(handler) = &element.on_float_change {
                                     handler(*max);
                                 }
                                 return true;
@@ -1208,7 +1208,7 @@ impl EventState {
                         };
                         if let Some(dir) = direction {
                             let multiplier = if modifiers.shift { 10 } else { 1 };
-                            if let Some(ref handler) = element.on_float_change {
+                            if let Some(handler) = &element.on_float_change {
                                 let new_val = slider_step_value(
                                     *value,
                                     *min,
@@ -1287,7 +1287,7 @@ impl EventState {
 
         // 3. Legacy fallback: fire on_change if present
         if let Some(element) = get_element_by_preorder(root_element, focused_idx) {
-            if let Some(ref handler) = element.on_change {
+            if let Some(handler) = &element.on_change {
                 handler(text.to_string());
             }
         }
@@ -1458,7 +1458,7 @@ impl EventState {
                                     is_composing: false,
                                 };
                                 dispatch_input_event(&input_event, &path, root_element);
-                                if let Some(ref handler) = element.on_change {
+                                if let Some(handler) = &element.on_change {
                                     handler(text.to_string());
                                 }
                             }
@@ -1817,10 +1817,11 @@ impl EventState {
         event_type: TouchEventType,
     ) {
         // Hit test to find the target element
-        let hit_path = hit_test(layout, root_element, event.x, event.y);
-        if hit_path.is_empty() {
-            return;
-        }
+        let hit_result = hit_test(layout, root_element, event.x, event.y);
+        let hit_path = match hit_result {
+            Some(ref r) if !r.path.is_empty() => &r.path,
+            _ => return,
+        };
 
         let target_idx = hit_path[0];
         let path = build_path_to_element(root_element, target_idx);
@@ -1924,16 +1925,17 @@ fn dispatch_pointer_event_three_phase_full(
     let mut handled = false;
 
     // Get the capture handler accessor and bubble handler accessor
-    let capture_handler = match event_type {
-        PointerEventType::Down => |e: &Element| e.on_pointer_down_capture.as_ref(),
-        PointerEventType::Up => |e: &Element| e.on_pointer_up_capture.as_ref(),
-        PointerEventType::Move => |e: &Element| e.on_pointer_move_capture.as_ref(),
+    type HandlerAccessor = for<'a> fn(&'a Element) -> Option<&'a Box<dyn Fn(&PointerEvent) -> EventResult>>;
+    let capture_handler: HandlerAccessor = match event_type {
+        PointerEventType::Down => |e| e.on_pointer_down_capture.as_ref(),
+        PointerEventType::Up => |e| e.on_pointer_up_capture.as_ref(),
+        PointerEventType::Move => |e| e.on_pointer_move_capture.as_ref(),
     };
 
-    let bubble_handler = match event_type {
-        PointerEventType::Down => |e: &Element| e.on_pointer_down.as_ref(),
-        PointerEventType::Up => |e: &Element| e.on_pointer_up.as_ref(),
-        PointerEventType::Move => |e: &Element| e.on_pointer_move.as_ref(),
+    let bubble_handler: HandlerAccessor = match event_type {
+        PointerEventType::Down => |e| e.on_pointer_down.as_ref(),
+        PointerEventType::Up => |e| e.on_pointer_up.as_ref(),
+        PointerEventType::Move => |e| e.on_pointer_move.as_ref(),
     };
 
     // 1. Capture phase (root to target's parent)
@@ -2012,7 +2014,7 @@ fn dispatch_click_event_three_phase(
     if !stopped {
         let target = path[target_pos];
         if let Some(element) = get_element_by_preorder(root_element, target) {
-            if let Some(ref handler) = element.on_click {
+            if let Some(handler) = &element.on_click {
                 let r = handler(ce);
                 apply_event_result(r, &mut stopped, &mut default_prevented);
                 handled = true;
@@ -2027,7 +2029,7 @@ fn dispatch_click_event_three_phase(
                 break;
             }
             if let Some(element) = get_element_by_preorder(root_element, idx) {
-                if let Some(ref handler) = element.on_click {
+                if let Some(handler) = &element.on_click {
                     let r = handler(ce);
                     apply_event_result(r, &mut stopped, &mut default_prevented);
                     handled = true;
@@ -2052,7 +2054,7 @@ fn dispatch_double_click_event(
     // path is deepest-to-root, so first is target
     for &idx in path_deepest_to_root {
         if let Some(element) = get_element_by_preorder(root_element, idx) {
-            if let Some(ref handler) = element.on_double_click {
+            if let Some(handler) = &element.on_double_click {
                 let r = handler(ce);
                 if r == EventResult::Stop || r == EventResult::StopAndPreventDefault {
                     return true;
@@ -2072,7 +2074,7 @@ fn dispatch_context_menu_event(
 ) -> bool {
     for &idx in path_deepest_to_root {
         if let Some(element) = get_element_by_preorder(root_element, idx) {
-            if let Some(ref handler) = element.on_context_menu {
+            if let Some(handler) = &element.on_context_menu {
                 let r = handler(pe);
                 if r == EventResult::Stop || r == EventResult::StopAndPreventDefault {
                     return true;
@@ -2111,7 +2113,7 @@ fn dispatch_before_input_event(
     if !stopped {
         let target = path[target_pos];
         if let Some(element) = get_element_by_preorder(root_element, target) {
-            if let Some(ref handler) = element.on_before_input {
+            if let Some(handler) = &element.on_before_input {
                 let r = handler(event);
                 apply_event_result(r, &mut stopped, &mut default_prevented);
                 handled = true;
@@ -2126,7 +2128,7 @@ fn dispatch_before_input_event(
                 break;
             }
             if let Some(element) = get_element_by_preorder(root_element, idx) {
-                if let Some(ref handler) = element.on_before_input {
+                if let Some(handler) = &element.on_before_input {
                     let r = handler(event);
                     apply_event_result(r, &mut stopped, &mut default_prevented);
                     handled = true;
@@ -2158,7 +2160,7 @@ fn dispatch_input_event(
     if !stopped {
         let target = path[target_pos];
         if let Some(element) = get_element_by_preorder(root_element, target) {
-            if let Some(ref handler) = element.on_input {
+            if let Some(handler) = &element.on_input {
                 handler(event);
             }
         }
@@ -2171,7 +2173,7 @@ fn dispatch_input_event(
                 break;
             }
             if let Some(element) = get_element_by_preorder(root_element, idx) {
-                if let Some(ref handler) = element.on_input {
+                if let Some(handler) = &element.on_input {
                     handler(event);
                     // Input is not cancelable but still propagates; we don't stop
                 }
@@ -2210,19 +2212,19 @@ fn dispatch_composition_event(
         if let Some(element) = get_element_by_preorder(root_element, target) {
             match phase {
                 CompositionPhase::Start => {
-                    if let Some(ref handler) = element.on_composition_start {
+                    if let Some(handler) = &element.on_composition_start {
                         let r = handler(event);
                         let mut dp = false;
                         apply_event_result(r, &mut stopped, &mut dp);
                     }
                 }
                 CompositionPhase::Update => {
-                    if let Some(ref handler) = element.on_composition_update {
+                    if let Some(handler) = &element.on_composition_update {
                         handler(event);
                     }
                 }
                 CompositionPhase::End => {
-                    if let Some(ref handler) = element.on_composition_end {
+                    if let Some(handler) = &element.on_composition_end {
                         handler(event);
                     }
                 }
@@ -2239,19 +2241,19 @@ fn dispatch_composition_event(
             if let Some(element) = get_element_by_preorder(root_element, idx) {
                 match phase {
                     CompositionPhase::Start => {
-                        if let Some(ref handler) = element.on_composition_start {
+                        if let Some(handler) = &element.on_composition_start {
                             let r = handler(event);
                             let mut dp = false;
                             apply_event_result(r, &mut stopped, &mut dp);
                         }
                     }
                     CompositionPhase::Update => {
-                        if let Some(ref handler) = element.on_composition_update {
+                        if let Some(handler) = &element.on_composition_update {
                             handler(event);
                         }
                     }
                     CompositionPhase::End => {
-                        if let Some(ref handler) = element.on_composition_end {
+                        if let Some(handler) = &element.on_composition_end {
                             handler(event);
                         }
                     }
@@ -2501,20 +2503,20 @@ fn dispatch_form_element_click(element: &Element) -> bool {
             indeterminate,
             ..
         } => {
-            if let Some(ref handler) = element.on_bool_change {
+            if let Some(handler) = &element.on_bool_change {
                 let new_val = if *indeterminate { true } else { !checked };
                 handler(new_val);
                 return true;
             }
         }
         ElementKind::Switch { on, .. } => {
-            if let Some(ref handler) = element.on_bool_change {
+            if let Some(handler) = &element.on_bool_change {
                 handler(!on);
                 return true;
             }
         }
         ElementKind::Radio { value, .. } => {
-            if let Some(ref handler) = element.on_change {
+            if let Some(handler) = &element.on_change {
                 handler(value.clone());
                 return true;
             }
@@ -2530,7 +2532,7 @@ fn dispatch_form_element_activate(element: &Element) -> bool {
     use crate::element::ElementKind;
     match &element.kind {
         ElementKind::Button { .. } => {
-            if let Some(ref handler) = element.on_click {
+            if let Some(handler) = &element.on_click {
                 let ce = ClickEvent {
                     x: 0.0,
                     y: 0.0,

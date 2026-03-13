@@ -81,6 +81,17 @@ impl SvgElement {
 /// Parses a usvg tree into a flat element list with ID-based lookup.
 /// Modifications mark the document dirty, and `update()` re-records the
 /// Skia Picture for rendering.
+impl std::fmt::Debug for SvgDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SvgDocument")
+            .field("elements", &self.elements.len())
+            .field("dirty", &self.dirty)
+            .field("intrinsic_width", &self.intrinsic_width)
+            .field("intrinsic_height", &self.intrinsic_height)
+            .finish()
+    }
+}
+
 pub struct SvgDocument {
     /// Original SVG data for re-parsing if needed.
     svg_data: Vec<u8>,
@@ -118,7 +129,11 @@ impl SvgDocument {
         };
 
         // Walk the usvg tree and build the flat element list
-        let root_indices = doc.walk_group(doc.tree.root(), None);
+        // SAFETY: walk_group only modifies elements/id_map, not tree.
+        // We need a raw pointer to avoid the borrow checker thinking
+        // tree.root() borrows the same thing as &mut self.
+        let tree_ptr: *const usvg::Tree = &doc.tree;
+        let root_indices = doc.walk_group(unsafe { &*tree_ptr }.root(), None);
         // Create a virtual root group to hold top-level children
         let mut root = SvgElement::new(SvgElementKind::Group);
         root.children = root_indices;
@@ -140,7 +155,7 @@ impl SvgDocument {
 
         for child in group.children() {
             match child {
-                usvg::Node::Group(ref g) => {
+                usvg::Node::Group(g) => {
                     let mut elem = SvgElement::new(SvgElementKind::Group);
                     elem.id = g.id().to_string().into_none_if_empty();
                     let ts = g.transform();
@@ -161,7 +176,7 @@ impl SvgDocument {
                     }
                     child_indices.push(idx);
                 }
-                usvg::Node::Path(ref p) => {
+                usvg::Node::Path(p) => {
                     let mut elem = SvgElement::new(SvgElementKind::Path {
                         data: Vec::new(), // Path data stored in usvg tree
                     });
@@ -169,13 +184,13 @@ impl SvgDocument {
                     let ts = p.abs_transform();
                     elem.transform = [ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty];
                     // Extract fill color
-                    if let Some(ref fill) = p.fill() {
+                    if let Some(fill) = p.fill() {
                         if let usvg::Paint::Color(c) = fill.paint() {
                             elem.fill = Some(SvgPaint::Solid(Color::new(c.red, c.green, c.blue, 255)));
                         }
                     }
                     // Extract stroke
-                    if let Some(ref stroke) = p.stroke() {
+                    if let Some(stroke) = p.stroke() {
                         if let usvg::Paint::Color(c) = stroke.paint() {
                             elem.stroke = Some(SvgStroke {
                                 paint: SvgPaint::Solid(Color::new(c.red, c.green, c.blue, 255)),
@@ -199,7 +214,7 @@ impl SvgDocument {
                     self.elements.push(elem);
                     child_indices.push(idx);
                 }
-                usvg::Node::Text(ref t) => {
+                usvg::Node::Text(t) => {
                     let mut elem = SvgElement::new(SvgElementKind::Text {
                         content: String::new(),
                     });
@@ -212,7 +227,7 @@ impl SvgDocument {
                     self.elements.push(elem);
                     child_indices.push(idx);
                 }
-                usvg::Node::Image(ref img) => {
+                usvg::Node::Image(img) => {
                     let mut elem = SvgElement::new(SvgElementKind::Image);
                     elem.id = img.id().to_string().into_none_if_empty();
 
@@ -299,7 +314,7 @@ impl SvgDocument {
     /// Set the text content of a text element by ID.
     pub fn set_text(&mut self, id: &str, content: &str) {
         if let Some(&idx) = self.id_map.get(id) {
-            if let SvgElementKind::Text { content: ref mut c } = self.elements[idx].kind {
+            if let SvgElementKind::Text { content: c } = &mut self.elements[idx].kind {
                 *c = content.to_string();
                 self.dirty = true;
             }
@@ -351,7 +366,7 @@ impl SvgDocument {
             }
 
             match child {
-                usvg::Node::Group(ref g) => {
+                usvg::Node::Group(g) => {
                     canvas.save();
 
                     // Apply transform (override or original)
@@ -374,10 +389,10 @@ impl SvgDocument {
                     }
 
                     // Clip path
-                    if let Some(ref clip_path) = g.clip_path() {
+                    if let Some(clip_path) = g.clip_path() {
                         for child_node in clip_path.root().children() {
-                            if let usvg::Node::Path(ref cp) = child_node {
-                                let clip_skia = usvg_path_to_skia(cp);
+                            if let usvg::Node::Path(cp) = child_node {
+                                let clip_skia = usvg_path_to_skia(cp.data());
                                 canvas.clip_path(&clip_skia, skia_safe::ClipOp::Intersect, true);
                             }
                         }
@@ -394,7 +409,7 @@ impl SvgDocument {
                     }
 
                     // Mask
-                    if let Some(ref mask) = g.mask() {
+                    if let Some(mask) = g.mask() {
                         apply_mask(canvas, mask);
                     }
 
@@ -408,8 +423,8 @@ impl SvgDocument {
                     }
                     canvas.restore();
                 }
-                usvg::Node::Path(ref p) => {
-                    let path = usvg_path_to_skia(p);
+                usvg::Node::Path(p) => {
+                    let path = usvg_path_to_skia(p.data());
 
                     // Fill with override color or original
                     let fill_override = override_elem.and_then(|e| e.fill.as_ref());
@@ -418,7 +433,7 @@ impl SvgDocument {
                         paint.set_anti_alias(true);
                         paint.set_color(skia_safe::Color::from_argb(c.a, c.r, c.g, c.b));
                         canvas.draw_path(&path, &paint);
-                    } else if let Some(ref fill) = p.fill() {
+                    } else if let Some(fill) = p.fill() {
                         if let Some(paint) = usvg_fill_to_paint(fill, p) {
                             canvas.draw_path(&path, &paint);
                         }
@@ -426,7 +441,7 @@ impl SvgDocument {
 
                     // Stroke with override or original
                     let stroke_override = override_elem.and_then(|e| e.stroke.as_ref());
-                    if let Some(ref so) = stroke_override {
+                    if let Some(so) = stroke_override {
                         if let SvgPaint::Solid(c) = &so.paint {
                             let mut paint = Paint::default();
                             paint.set_anti_alias(true);
@@ -435,21 +450,21 @@ impl SvgDocument {
                             paint.set_color(skia_safe::Color::from_argb(c.a, c.r, c.g, c.b));
                             canvas.draw_path(&path, &paint);
                         }
-                    } else if let Some(ref stroke) = p.stroke() {
+                    } else if let Some(stroke) = p.stroke() {
                         if let Some(paint) = usvg_stroke_to_paint(stroke, p) {
                             canvas.draw_path(&path, &paint);
                         }
                     }
                 }
-                usvg::Node::Text(ref text) => render_text(canvas, text),
-                usvg::Node::Image(ref img) => render_image(canvas, img),
+                usvg::Node::Text(text) => render_text(canvas, text),
+                usvg::Node::Image(img) => render_image(canvas, img),
             }
         }
     }
 
     /// Draw the document to a canvas within the given bounds.
     pub fn draw(&self, canvas: &Canvas, dest: &Rect) {
-        if let Some(ref picture) = self.picture {
+        if let Some(picture) = &self.picture {
             canvas.save();
             let sx = dest.width / self.intrinsic_width;
             let sy = dest.height / self.intrinsic_height;
@@ -462,7 +477,7 @@ impl SvgDocument {
 
     /// Draw with optional tint.
     pub fn draw_tinted(&self, canvas: &Canvas, dest: &Rect, tint: Option<&Color>) {
-        if let Some(ref picture) = self.picture {
+        if let Some(picture) = &self.picture {
             canvas.save();
             let sx = dest.width / self.intrinsic_width;
             let sy = dest.height / self.intrinsic_height;
@@ -569,8 +584,8 @@ fn usvg_fill_to_paint(fill: &usvg::Fill, path: &usvg::Path) -> Option<Paint> {
             paint.set_color(skia_safe::Color::from_argb(alpha, c.red, c.green, c.blue));
         }
         usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) | usvg::Paint::Pattern(_) => {
-            if let Some(shader) = usvg_paint_to_skia(&fill.paint(), fill.opacity(), &path.bounding_box()) {
-                paint.set_shader(shader);
+            if let Some(resolved_paint) = usvg_paint_to_skia(&fill.paint(), fill.opacity()) {
+                paint = resolved_paint;
             } else {
                 return None;
             }
@@ -595,8 +610,10 @@ fn usvg_stroke_to_paint(stroke: &usvg::Stroke, path: &usvg::Path) -> Option<Pain
             paint.set_color(skia_safe::Color::from_argb(alpha, c.red, c.green, c.blue));
         }
         _ => {
-            if let Some(shader) = usvg_paint_to_skia(&stroke.paint(), stroke.opacity(), &path.bounding_box()) {
-                paint.set_shader(shader);
+            if let Some(resolved_paint) = usvg_paint_to_skia(&stroke.paint(), stroke.opacity()) {
+                if let Some(shader) = resolved_paint.shader() {
+                    paint.set_shader(shader.clone());
+                }
             } else {
                 return None;
             }
@@ -615,7 +632,7 @@ fn usvg_stroke_to_paint(stroke: &usvg::Stroke, path: &usvg::Path) -> Option<Pain
         usvg::LineJoin::Bevel => skia_safe::paint::Join::Bevel,
     });
     // Dash
-    if let Some(ref dash) = stroke.dasharray() {
+    if let Some(dash) = stroke.dasharray() {
         let intervals: Vec<f32> = dash.iter().map(|v| *v as f32).collect();
         if intervals.len() >= 2 {
             if let Some(effect) = skia_safe::PathEffect::dash(&intervals, stroke.dashoffset() as f32) {
@@ -710,10 +727,10 @@ impl VectorSvg {
 fn render_node(canvas: &Canvas, group: &usvg::Group) {
     for child in group.children() {
         match child {
-            usvg::Node::Group(ref g) => render_group(canvas, g),
-            usvg::Node::Path(ref p) => render_path(canvas, p),
-            usvg::Node::Image(ref img) => render_image(canvas, img),
-            usvg::Node::Text(ref text) => render_text(canvas, text),
+            usvg::Node::Group(g) => render_group(canvas, g),
+            usvg::Node::Path(p) => render_path(canvas, p),
+            usvg::Node::Image(img) => render_image(canvas, img),
+            usvg::Node::Text(text) => render_text(canvas, text),
         }
     }
 }
@@ -845,7 +862,7 @@ fn render_image(canvas: &Canvas, image: &usvg::Image) {
                 canvas.draw_image_rect(skia_img, None, rect, &paint);
             }
         }
-        usvg::ImageKind::SVG(ref sub_tree) => {
+        usvg::ImageKind::SVG(sub_tree) => {
             // Recursively render nested SVG
             canvas.save();
             let size = sub_tree.size();
@@ -929,10 +946,10 @@ fn usvg_paint_to_skia(paint: &usvg::Paint, opacity: usvg::Opacity) -> Option<Pai
 
             let shader = gradient_shader::linear(
                 (start, end),
-                colors.as_ref(),
+                colors.as_slice(),
                 positions.as_deref(),
                 tile_mode,
-                None,
+                None::<skia_safe::gradient_shader::Flags>,
                 Some(&local_matrix),
             )?;
             p.set_shader(shader);
@@ -945,12 +962,12 @@ fn usvg_paint_to_skia(paint: &usvg::Paint, opacity: usvg::Opacity) -> Option<Pai
             let local_matrix = usvg_transform_to_matrix(rg.transform());
 
             let shader = gradient_shader::two_point_conical(
-                focal, 0.0,
-                center, rg.r().get(),
-                colors.as_ref(),
+                focal, 0.0f32,
+                center, rg.r().get() as f32,
+                colors.as_slice(),
                 positions.as_deref(),
                 tile_mode,
-                None,
+                None::<skia_safe::gradient_shader::Flags>,
                 Some(&local_matrix),
             )?;
             p.set_shader(shader);
@@ -1019,7 +1036,7 @@ fn build_clip_path(clip: &usvg::ClipPath) -> Option<Path> {
     let mut combined = Path::new();
 
     for child in clip.root().children() {
-        if let usvg::Node::Path(ref p) = child {
+        if let usvg::Node::Path(p) = child {
             let mut sub_path = usvg_path_to_skia(p.data());
             // Apply per-path fill rule for clipping
             if let Some(fill) = p.fill() {
@@ -1097,7 +1114,7 @@ fn build_filters(filters: &[std::sync::Arc<usvg::filter::Filter>]) -> Option<Ima
 
         for primitive in filter.primitives() {
             let built = build_filter_primitive(primitive, &named_results, &last_result);
-            if let Some(ref f) = built {
+            if let Some(f) = &built {
                 if !primitive.result().is_empty() {
                     named_results.insert(primitive.result().to_string(), f.clone());
                 }
@@ -1109,7 +1126,7 @@ fn build_filters(filters: &[std::sync::Arc<usvg::filter::Filter>]) -> Option<Ima
         if let Some(filter_result) = last_result {
             result = Some(match result {
                 Some(existing) => {
-                    skia_safe::image_filters::compose(filter_result, existing)
+                    skia_safe::image_filters::compose(filter_result, existing.clone())
                         .unwrap_or(existing)
                 }
                 None => filter_result,
@@ -1209,7 +1226,7 @@ fn build_filter_primitive(
                     skia_safe::image_filters::blend(skia_safe::BlendMode::Xor, bg, fg, crop)
                 }
                 CompositeOperator::Arithmetic { k1, k2, k3, k4 } => {
-                    skia_safe::image_filters::arithmetic(*k1, *k2, *k3, *k4, true, bg, fg, crop)
+                    skia_safe::image_filters::arithmetic(k1, k2, k3, k4, true, bg, fg, crop)
                 }
             }
         }
@@ -1472,13 +1489,13 @@ fn compute_vector_fit(
     fit: crate::element::ImageFit,
 ) -> Rect {
     if intrinsic_w <= 0.0 || intrinsic_h <= 0.0 {
-        return *dest;
+        return dest.clone();
     }
 
     let aspect = intrinsic_w / intrinsic_h;
 
     match fit {
-        crate::element::ImageFit::Fill => *dest,
+        crate::element::ImageFit::Fill => dest.clone(),
         crate::element::ImageFit::Contain => {
             let (w, h) = if dest.width / dest.height > aspect {
                 (dest.height * aspect, dest.height)

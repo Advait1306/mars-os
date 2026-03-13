@@ -188,7 +188,7 @@ impl SkiaRenderer {
                                 canvas.scale((*sx, *sy));
                             }
                             crate::style::Transform::Skew(x_deg, y_deg) => {
-                                canvas.skew(x_deg.to_radians().tan(), y_deg.to_radians().tan());
+                                canvas.skew((x_deg.to_radians().tan(), y_deg.to_radians().tan()));
                             }
                             crate::style::Transform::Matrix(m) => {
                                 let mut mat = skia_safe::Matrix::new_identity();
@@ -583,7 +583,7 @@ impl SkiaRenderer {
             let mut h = DefaultHasher::new();
             match source {
                 crate::element::ImageSource::File(path) => path.hash(&mut h),
-                crate::element::ImageSource::Data(data) => data.hash(&mut h),
+                crate::element::ImageSource::Svg(data) => data.hash(&mut h),
                 crate::element::ImageSource::VectorSvg(svg) => svg.hash(&mut h),
             }
             h.finish()
@@ -608,7 +608,7 @@ impl SkiaRenderer {
                 self.cache_total_bytes += byte_size;
                 Some(image)
             }
-            crate::element::ImageSource::Data(data) => {
+            crate::element::ImageSource::Svg(data) => {
                 let sk_data = skia_safe::Data::new_copy(data.as_bytes());
                 let image = skia_safe::Image::from_encoded(sk_data)?;
                 let byte_size = data.len();
@@ -738,6 +738,8 @@ impl SkiaRenderer {
                     skia_safe::gradient_shader::GradientShaderColors::Colors(&colors),
                     positions.as_deref(),
                     TileMode::Clamp,
+                    None,
+                    None,
                 )
             }
             crate::style::Gradient::Radial { center, stops } => {
@@ -753,6 +755,8 @@ impl SkiaRenderer {
                     skia_safe::gradient_shader::GradientShaderColors::Colors(&colors),
                     positions.as_deref(),
                     TileMode::Clamp,
+                    None,
+                    None,
                 )
             }
             crate::style::Gradient::Conic { center, from_angle_deg, stops } => {
@@ -765,8 +769,9 @@ impl SkiaRenderer {
                     skia_safe::gradient_shader::GradientShaderColors::Colors(&colors),
                     positions.as_deref(),
                     TileMode::Clamp,
-                    Some(*from_angle_deg),
-                    Some(*from_angle_deg + 360.0),
+                    (*from_angle_deg, *from_angle_deg + 360.0),
+                    None,
+                    None,
                 )
             }
         };
@@ -1251,7 +1256,7 @@ impl SkiaRenderer {
                     if span.font_weight.is_some() || span.italic {
                         style.set_font_style(FontStyle::new(w, Width::NORMAL, s));
                     }
-                    if let Some(ref families) = span.font_family {
+                    if let Some(families) = &span.font_family {
                         style.set_font_families(families);
                     }
                     if let Some(ls) = span.letter_spacing {
@@ -1465,6 +1470,7 @@ impl SkiaRenderer {
             let img = match source {
                 ImageSource::Svg(data) => load_svg(data.as_bytes(), (tw, th)),
                 ImageSource::File(path) => load_image_file(path, (tw, th)),
+                ImageSource::VectorSvg(_) => unreachable!(),
             };
             if let Some(img) = img {
                 let byte_size = (img.width() * img.height() * 4) as usize;
@@ -1990,8 +1996,8 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.0, 0.0, b, 0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::Contrast(amount) => {
                 let c = *amount;
@@ -2002,8 +2008,8 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.0, 0.0, c, 0.0, t,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::Grayscale(amount) => {
                 let s = 1.0 - amount.clamp(0.0, 1.0);
@@ -2013,8 +2019,8 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.2126 - 0.2126 * s, 0.7152 - 0.7152 * s, 0.0722 + 0.9278 * s, 0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::Sepia(amount) => {
                 let s = 1.0 - amount.clamp(0.0, 1.0);
@@ -2024,8 +2030,8 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.272 - 0.272 * s, 0.534 - 0.534 * s, 0.131 + 0.869 * s, 0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::HueRotate(degrees) => {
                 let a = degrees.to_radians();
@@ -2046,8 +2052,8 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::Invert(amount) => {
                 let i = *amount;
@@ -2057,8 +2063,8 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.0, 0.0, 1.0 - 2.0 * i, 0.0, i * 255.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::Opacity(amount) => {
                 let o = *amount;
@@ -2068,8 +2074,8 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.0, 0.0, 1.0, 0.0, 0.0,
                     0.0, 0.0, 0.0, o, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::Saturate(amount) => {
                 let s = *amount;
@@ -2079,14 +2085,15 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
                     0.2126 - 0.2126 * s, 0.7152 - 0.7152 * s, 0.0722 + 0.9278 * s, 0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
-                let cf = color_filters::matrix_row_major(&matrix);
-                cf.and_then(|cf| image_filters::color_filter(cf, current, None))
+                let cf = color_filters::matrix_row_major(&matrix, None);
+                image_filters::color_filter(cf, current, None)
             }
             crate::style::Filter::DropShadow { x, y, blur, color } => {
                 image_filters::drop_shadow(
                     (*x, *y),
                     (*blur, *blur),
-                    to_skia_color(color),
+                    skia_safe::Color4f::from(to_skia_color(color)),
+                    None::<skia_safe::ColorSpace>,
                     current,
                     None,
                 )

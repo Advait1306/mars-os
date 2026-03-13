@@ -10,7 +10,7 @@ use crate::style::{
     AlignContent, Alignment, Background, BackgroundClip, BackgroundOrigin, Border, BorderImage,
     BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim, Direction, DisplayMode, Filter,
     FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement, BlendMode, Justify, Outline,
-    Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize, Transform,
+    Overflow, PositionType, TextAlign, TextDecorationStyle, TextDirection, TrackSize, Transform,
 };
 
 pub enum ElementKind {
@@ -758,8 +758,8 @@ pub fn icon(name: &str) -> Element {
         kind: ElementKind::Icon {
             name: name.to_string(),
         },
-        width: Some(24.0),
-        height: Some(24.0),
+        width: Some(Dim::Px(24.0)),
+        height: Some(Dim::Px(24.0)),
         ..Default::default()
     }
 }
@@ -771,8 +771,8 @@ pub fn svg_document(doc: crate::svg_render::SvgDocument) -> Element {
         kind: ElementKind::SvgDocument {
             document: std::sync::Arc::new(std::sync::Mutex::new(doc)),
         },
-        width: Some(w),
-        height: Some(h),
+        width: Some(Dim::Px(w)),
+        height: Some(Dim::Px(h)),
         ..Default::default()
     }
 }
@@ -782,8 +782,8 @@ pub fn color_picker(value: Color) -> Element {
     Element {
         kind: ElementKind::ColorPicker { value },
         cursor: Some(CursorStyle::Pointer),
-        width: Some(36.0),
-        height: Some(36.0),
+        width: Some(Dim::Px(36.0)),
+        height: Some(Dim::Px(36.0)),
         ..Default::default()
     }
 }
@@ -795,8 +795,8 @@ pub fn date_picker(value: Option<&str>) -> Element {
             value: value.map(|s| s.to_string()),
             variant: DatePickerVariant::Date,
         },
-        width: Some(200.0),
-        height: Some(36.0),
+        width: Some(Dim::Px(200.0)),
+        height: Some(Dim::Px(36.0)),
         ..Default::default()
     }
 }
@@ -808,8 +808,8 @@ pub fn time_picker(value: Option<&str>) -> Element {
             value: value.map(|s| s.to_string()),
             variant: DatePickerVariant::Time,
         },
-        width: Some(120.0),
-        height: Some(36.0),
+        width: Some(Dim::Px(120.0)),
+        height: Some(Dim::Px(36.0)),
         ..Default::default()
     }
 }
@@ -821,8 +821,8 @@ pub fn datetime_picker(value: Option<&str>) -> Element {
             value: value.map(|s| s.to_string()),
             variant: DatePickerVariant::DateTime,
         },
-        width: Some(280.0),
-        height: Some(36.0),
+        width: Some(Dim::Px(280.0)),
+        height: Some(Dim::Px(36.0)),
         ..Default::default()
     }
 }
@@ -835,8 +835,8 @@ pub fn file_input() -> Element {
             accept: None,
             multiple: false,
         },
-        width: Some(200.0),
-        height: Some(36.0),
+        width: Some(Dim::Px(200.0)),
+        height: Some(Dim::Px(36.0)),
         ..Default::default()
     }
 }
@@ -1475,10 +1475,6 @@ impl Element {
             spread,
             inset: true,
         });
-        self
-    }
-    pub fn hidden(mut self) -> Self {
-        self.visible = false;
         self
     }
     pub fn blend_mode(mut self, mode: BlendMode) -> Self {

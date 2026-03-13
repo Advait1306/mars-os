@@ -143,7 +143,10 @@ fn build_taffy_node(
                 .unwrap()
         }
         ElementKind::RichText { spans } => {
-            let full_text: String = spans.iter().map(|s| s.content.as_str()).collect();
+            let full_text: String = spans.iter().filter_map(|s| match s {
+                crate::element::RichSpan::Text(ts) => Some(ts.content.as_str()),
+                _ => None,
+            }).collect();
             tree.new_leaf_with_context(style, make_ctx(full_text, element))
                 .unwrap()
         }
@@ -366,10 +369,10 @@ fn element_to_taffy_style(element: &Element) -> Style {
     };
 
     // Size
-    if let Some(ref w) = element.width {
+    if let Some(w) = &element.width {
         style.size.width = dim_to_taffy(w);
     }
-    if let Some(ref h) = element.height {
+    if let Some(h) = &element.height {
         style.size.height = dim_to_taffy(h);
     }
 
@@ -384,16 +387,16 @@ fn element_to_taffy_style(element: &Element) -> Style {
     }
 
     // Min/max size
-    if let Some(ref d) = element.min_width {
+    if let Some(d) = &element.min_width {
         style.min_size.width = dim_to_taffy(d);
     }
-    if let Some(ref d) = element.min_height {
+    if let Some(d) = &element.min_height {
         style.min_size.height = dim_to_taffy(d);
     }
-    if let Some(ref d) = element.max_width {
+    if let Some(d) = &element.max_width {
         style.max_size.width = dim_to_taffy(d);
     }
-    if let Some(ref d) = element.max_height {
+    if let Some(d) = &element.max_height {
         style.max_size.height = dim_to_taffy(d);
     }
 
@@ -411,7 +414,7 @@ fn element_to_taffy_style(element: &Element) -> Style {
     }
 
     // Flex basis
-    if let Some(ref b) = element.flex_basis {
+    if let Some(b) = &element.flex_basis {
         style.flex_basis = dim_to_taffy(b);
     }
 
@@ -441,7 +444,7 @@ fn element_to_taffy_style(element: &Element) -> Style {
     };
 
     // Border (layout contribution)
-    if let Some(ref border) = element.border {
+    if let Some(border) = &element.border {
         let bw = LengthPercentage::length(border.width);
         style.border = taffy::geometry::Rect {
             top: bw,
@@ -465,12 +468,12 @@ fn element_to_taffy_style(element: &Element) -> Style {
     style.align_items = Some(map_alignment(&element.align_items));
 
     // Align self
-    if let Some(ref a) = element.align_self {
+    if let Some(a) = &element.align_self {
         style.align_self = Some(map_align_self(a));
     }
 
     // Align content
-    if let Some(ref a) = element.align_content {
+    if let Some(a) = &element.align_content {
         style.align_content = Some(map_align_content(a));
     }
 
@@ -478,12 +481,12 @@ fn element_to_taffy_style(element: &Element) -> Style {
     style.justify_content = Some(map_justify(&element.justify));
 
     // Justify items (grid)
-    if let Some(ref a) = element.justify_items {
+    if let Some(a) = &element.justify_items {
         style.justify_items = Some(map_alignment(a));
     }
 
     // Justify self (grid)
-    if let Some(ref a) = element.justify_self {
+    if let Some(a) = &element.justify_self {
         style.justify_self = Some(map_align_self(a));
     }
 
@@ -538,13 +541,13 @@ fn element_to_taffy_style(element: &Element) -> Style {
     };
 
     // Grid placement
-    if let Some((ref start, ref end)) = element.grid_column {
+    if let Some((start, end)) = &element.grid_column {
         style.grid_column = taffy::geometry::Line {
             start: map_grid_placement(start),
             end: map_grid_placement(end),
         };
     }
-    if let Some((ref start, ref end)) = element.grid_row {
+    if let Some((start, end)) = &element.grid_row {
         style.grid_row = taffy::geometry::Line {
             start: map_grid_placement(start),
             end: map_grid_placement(end),

@@ -436,7 +436,7 @@ fn collect_recursive(
     infos: &mut HashMap<String, ElementInfo>,
     bounds: &mut HashMap<String, Rect>,
 ) {
-    if let Some(ref key) = element.key {
+    if let Some(key) = &element.key {
         infos.insert(
             key.clone(),
             ElementInfo {

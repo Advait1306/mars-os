@@ -5,6 +5,8 @@
 
 use std::any::Any;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::os::fd::FromRawFd;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -38,7 +40,9 @@ use smithay_client_toolkit::{
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
 
-use wayland_client::protocol::wl_registry;
+use wayland_client::protocol::{
+    wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source,
+};
 use wayland_client::Dispatch;
 use wayland_protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3, zwp_text_input_v3,
@@ -121,6 +125,28 @@ struct WaylandState {
     pending_commit: Option<String>,
     /// Whether the text input is currently enabled (active for the focused element).
     text_input_enabled: bool,
+
+    // Clipboard (wl_data_device)
+    data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+    data_device: Option<wl_data_device::WlDataDevice>,
+    /// The current selection offer (clipboard from another/this client).
+    current_selection_offer: Option<wl_data_offer::WlDataOffer>,
+    /// MIME types available in the current selection offer.
+    selection_mime_types: Vec<String>,
+    /// MIME types being accumulated for the newest incoming data offer (before Selection assigns it).
+    pending_offer_mime_types: Vec<String>,
+    /// The newest data offer being tracked (before it becomes the selection).
+    pending_offer: Option<wl_data_offer::WlDataOffer>,
+    /// Active data source for our clipboard content (kept alive while selection is ours).
+    clipboard_source: Option<wl_data_source::WlDataSource>,
+    /// Data to write when the compositor requests it via wl_data_source::Send.
+    clipboard_content: std::collections::HashMap<String, Vec<u8>>,
+    /// Last serial from keyboard/pointer events (needed for set_selection).
+    last_input_serial: u32,
+    /// QueueHandle for creating Wayland protocol objects.
+    qh: Option<QueueHandle<Self>>,
+    /// Wayland connection for flushing during clipboard reads.
+    connection: Option<Connection>,
 }
 
 impl WaylandState {
@@ -147,17 +173,169 @@ impl WaylandState {
         }
     }
 
+    /// Read the current Wayland selection (clipboard) and populate EventState.
+    /// Called before event dispatch so paste has access to system clipboard data.
+    fn sync_clipboard_to_event_state(&mut self) {
+        let offer = match self.current_selection_offer.as_ref() {
+            Some(o) => o.clone(),
+            None => return,
+        };
+
+        // Check if text/plain is available
+        let mime = self
+            .selection_mime_types
+            .iter()
+            .find(|m| {
+                m.as_str() == "text/plain;charset=utf-8"
+                    || m.as_str() == "text/plain"
+                    || m.as_str() == "UTF8_STRING"
+                    || m.as_str() == "TEXT"
+            })
+            .cloned();
+
+        let mime_type = match mime {
+            Some(m) => m,
+            None => return,
+        };
+
+        // Create a pipe and ask the compositor to write the data to it
+        let mut fds = [0i32; 2];
+        let ret = unsafe { libc::pipe(fds.as_mut_ptr()) };
+        if ret != 0 {
+            return;
+        }
+
+        let read_fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fds[0]) };
+        let write_fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fds[1]) };
+
+        use std::os::fd::AsFd;
+        offer.receive(mime_type, write_fd.as_fd());
+        // Drop write_fd after calling receive so the compositor gets the only write handle
+        drop(write_fd);
+
+        // Flush the Wayland connection so the compositor processes the receive request
+        if let Some(ref conn) = self.connection {
+            let _ = conn.flush();
+        }
+
+        // Read from the pipe with a short timeout (clipboard data is small)
+        use std::io::Read;
+        use std::os::fd::AsRawFd;
+
+        let mut pfd = libc::pollfd {
+            fd: read_fd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let poll_ret = unsafe { libc::poll(&mut pfd, 1, 100) }; // 100ms timeout
+
+        if poll_ret > 0 {
+            // Set non-blocking for read_to_end so it doesn't block after data
+            unsafe {
+                let flags = libc::fcntl(read_fd.as_raw_fd(), libc::F_GETFL);
+                libc::fcntl(
+                    read_fd.as_raw_fd(),
+                    libc::F_SETFL,
+                    flags | libc::O_NONBLOCK,
+                );
+            }
+
+            let mut file = std::fs::File::from(read_fd);
+            let mut buf = Vec::new();
+            let _ = file.read_to_end(&mut buf);
+            if !buf.is_empty() {
+                let mut data = crate::input::ClipboardData::new();
+                if let Ok(text) = String::from_utf8(buf) {
+                    data.set_text(&text);
+                }
+                self.event_state.set_system_clipboard(data);
+            }
+        }
+    }
+
+    /// Set the Wayland selection with clipboard data from a copy/cut operation.
+    fn set_wayland_selection(&mut self, data: crate::input::ClipboardData, qh: &QueueHandle<Self>) {
+        let manager = match self.data_device_manager.as_ref() {
+            Some(m) => m,
+            None => return,
+        };
+        let device = match self.data_device.as_ref() {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Create a new data source
+        let source = manager.create_data_source(qh, ());
+
+        // Offer MIME types
+        if data.get_text().is_some() {
+            source.offer("text/plain;charset=utf-8".to_string());
+            source.offer("text/plain".to_string());
+            source.offer("UTF8_STRING".to_string());
+            source.offer("TEXT".to_string());
+        }
+
+        // Store the content for when Send events arrive
+        self.clipboard_content.clear();
+        if let Some(text) = data.get_text() {
+            let bytes = text.as_bytes().to_vec();
+            self.clipboard_content
+                .insert("text/plain;charset=utf-8".to_string(), bytes.clone());
+            self.clipboard_content
+                .insert("text/plain".to_string(), bytes.clone());
+            self.clipboard_content
+                .insert("UTF8_STRING".to_string(), bytes.clone());
+            self.clipboard_content
+                .insert("TEXT".to_string(), bytes);
+        }
+
+        // Set the selection
+        device.set_selection(Some(&source), self.last_input_serial);
+
+        // Keep the source alive
+        self.clipboard_source = Some(source);
+    }
+
+    /// Check if any pending events contain a Ctrl+V paste shortcut.
+    fn has_pending_paste(&self) -> bool {
+        for event in &self.pending_events {
+            if let InputEvent::KeyDown { key, modifiers } = event {
+                if modifiers.ctrl && !modifiers.alt && !modifiers.super_ {
+                    // v = 0x76, V = 0x56 (XKB keysym for Latin v/V)
+                    let raw = key.0;
+                    if raw == 0x76 || raw == 0x56 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Process any pending input events against the cached layout/element trees.
     fn process_input_events(&mut self) {
         if self.pending_events.is_empty() {
             return;
         }
+
+        // If a paste shortcut is pending, sync system clipboard data first
+        if self.has_pending_paste() {
+            self.sync_clipboard_to_event_state();
+        }
+
         let events = std::mem::take(&mut self.pending_events);
         if let (Some(layout), Some(elements)) = (&self.last_layout, &self.last_element_tree) {
             for event in &events {
                 if self.event_state.dispatch(event, layout, elements) {
                     self.needs_redraw = true;
                 }
+            }
+        }
+
+        // If copy/cut produced clipboard data, set the Wayland selection
+        if let Some(data) = self.event_state.take_pending_clipboard_write() {
+            if let Some(qh) = self.qh.clone() {
+                self.set_wayland_selection(data, &qh);
             }
         }
     }
@@ -434,6 +612,13 @@ impl SeatHandler for WaylandState {
                     self.text_input = Some(ti);
                 }
             }
+            // Create data device for clipboard support
+            if self.data_device.is_none() {
+                if let Some(ref manager) = self.data_device_manager {
+                    let dd = manager.get_data_device(&seat, qh, ());
+                    self.data_device = Some(dd);
+                }
+            }
         }
     }
 
@@ -474,7 +659,8 @@ impl PointerHandler for WaylandState {
                     x: event.position.0 as f32,
                     y: event.position.1 as f32,
                 }),
-                PointerEventKind::Press { button, time, .. } => {
+                PointerEventKind::Press { button, time, serial } => {
+                    self.last_input_serial = serial;
                     let mb = match button {
                         272 => MouseButton::Left,    // BTN_LEFT
                         273 => MouseButton::Right,   // BTN_RIGHT
@@ -573,9 +759,10 @@ impl KeyboardHandler for WaylandState {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
-        _: u32,
+        serial: u32,
         event: KeyEvent,
     ) {
+        self.last_input_serial = serial;
         let modifiers = self.current_modifiers;
         let key = crate::input::Key(event.keysym.raw());
 
@@ -834,6 +1021,133 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandState {
     }
 }
 
+// --- wl_data_device handlers (clipboard) ---
+
+impl Dispatch<wl_data_device_manager::WlDataDeviceManager, ()> for WaylandState {
+    fn event(
+        _: &mut Self,
+        _: &wl_data_device_manager::WlDataDeviceManager,
+        _: wl_data_device_manager::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // The manager has no events.
+    }
+}
+
+impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        _: &wl_data_device::WlDataDevice,
+        event: wl_data_device::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_device::Event::DataOffer { id } => {
+                // A new data offer has been created. Track it as pending
+                // until we receive Selection event assigning it as the clipboard.
+                state.pending_offer = Some(id);
+                state.pending_offer_mime_types.clear();
+            }
+            wl_data_device::Event::Selection { id } => {
+                // The compositor tells us which offer is the current clipboard selection.
+                // Move pending MIME types to the selection.
+                if let Some(ref offer) = id {
+                    if let Some(ref pending) = state.pending_offer {
+                        if pending == offer {
+                            state.selection_mime_types =
+                                std::mem::take(&mut state.pending_offer_mime_types);
+                        }
+                    }
+                }
+                // Destroy the old selection offer if it differs
+                if let Some(old) = state.current_selection_offer.take() {
+                    if id.as_ref() != Some(&old) {
+                        old.destroy();
+                    }
+                }
+                state.current_selection_offer = id;
+                state.pending_offer = None;
+            }
+            wl_data_device::Event::Enter { .. }
+            | wl_data_device::Event::Leave
+            | wl_data_device::Event::Motion { .. }
+            | wl_data_device::Event::Drop => {
+                // DnD events — not handled yet
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        offer: &wl_data_offer::WlDataOffer,
+        event: wl_data_offer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_offer::Event::Offer { mime_type } => {
+                // Track MIME types for this offer.
+                // DataOffer events come before Selection, so track on pending_offer.
+                if let Some(ref pending) = state.pending_offer {
+                    if pending == offer {
+                        state.pending_offer_mime_types.push(mime_type);
+                        return;
+                    }
+                }
+                // If it matches the current selection, add there
+                if let Some(ref current) = state.current_selection_offer {
+                    if current == offer {
+                        state.selection_mime_types.push(mime_type);
+                    }
+                }
+            }
+            wl_data_offer::Event::SourceActions { .. }
+            | wl_data_offer::Event::Action { .. } => {
+                // DnD action negotiation — not handled yet
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandState {
+    fn event(
+        state: &mut Self,
+        _source: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_source::Event::Send { mime_type, fd } => {
+                // The compositor (or another client) requests our clipboard data.
+                // Write the data for the requested MIME type to the fd.
+                if let Some(data) = state.clipboard_content.get(&mime_type) {
+                    use std::io::Write;
+                    let mut file = std::fs::File::from(fd);
+                    let _ = file.write_all(data);
+                    // fd is dropped here, closing the write end
+                }
+            }
+            wl_data_source::Event::Cancelled => {
+                // Another client took the selection. Drop our source.
+                state.clipboard_source = None;
+                state.clipboard_content.clear();
+            }
+            _ => {}
+        }
+    }
+}
+
 // --- Public entry point ---
 
 pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
@@ -857,6 +1171,10 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
     // Bind zwp_text_input_manager_v3 if available (not fatal if missing)
     let text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3> =
         wl_context.globals.bind(&qh, 1..=1, ()).ok();
+
+    // Bind wl_data_device_manager for clipboard support (not fatal if missing)
+    let data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager> =
+        wl_context.globals.bind(&qh, 1..=3, ()).ok();
 
     let (width, height, layer_surface) = match &config {
         SurfaceConfig::LayerShell {
@@ -973,6 +1291,17 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         pending_preedit: None,
         pending_commit: None,
         text_input_enabled: false,
+        data_device_manager,
+        data_device: None,
+        current_selection_offer: None,
+        selection_mime_types: Vec::new(),
+        pending_offer_mime_types: Vec::new(),
+        pending_offer: None,
+        clipboard_source: None,
+        clipboard_content: HashMap::new(),
+        last_input_serial: 0,
+        qh: Some(qh.clone()),
+        connection: Some(conn.clone()),
     };
 
     let mut event_loop: EventLoop<WaylandState> =
