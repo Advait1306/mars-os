@@ -14,6 +14,7 @@ pub mod spring;
 pub mod animation;
 pub mod animator;
 pub mod scroll;
+pub mod select_state;
 pub mod text_input_state;
 pub mod textarea_state;
 pub mod wayland;
@@ -33,6 +34,7 @@ pub use input::{
     ScrollEndEvent, ScrollSource, TextInputEvent, TouchEvent, WheelEvent,
 };
 pub use animation::{Animation, Easing, From, To};
+pub use select_state::{SelectOption, SelectGroup, SelectState};
 
 /// Run a view as a Wayland application.
 pub fn run<V: View>(view: V, config: SurfaceConfig) {

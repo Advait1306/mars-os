@@ -5,6 +5,7 @@ use crate::input::{
     EventResult, FocusEvent, KeyboardEvent, PointerEvent, PointerEvents, ScrollEndEvent,
     TextInputEvent, TouchEvent, WheelEvent,
 };
+use crate::select_state::SelectOption;
 use crate::style::{
     AlignContent, Alignment, Border, BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim,
     Direction, DisplayMode, Filter, FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement,
@@ -59,6 +60,11 @@ pub enum ElementKind {
     },
     Textarea {
         value: String,
+        placeholder: String,
+    },
+    Select {
+        options: Vec<SelectOption>,
+        selected: Option<usize>,
         placeholder: String,
     },
 }
@@ -349,6 +355,14 @@ pub struct Element {
     pub progress_color: Option<Color>,
     pub track_color: Option<Color>,
 
+    // Select/Dropdown properties
+    pub select_open: bool,
+    pub select_highlighted: Option<usize>,
+    pub select_searchable: bool,
+    pub select_search_text: String,
+    pub select_max_visible: usize,
+    pub select_scroll_offset: f32,
+
     // Textarea properties
     pub text_wrap: TextWrap,
     pub textarea_resize: TextareaResize,
@@ -525,6 +539,13 @@ impl Default for Element {
             show_value: false,
             progress_color: None,
             track_color: None,
+            // Select/Dropdown
+            select_open: false,
+            select_highlighted: None,
+            select_searchable: false,
+            select_search_text: String::new(),
+            select_max_visible: 8,
+            select_scroll_offset: 0.0,
             // Textarea
             text_wrap: TextWrap::Soft,
             textarea_resize: TextareaResize::None,
@@ -814,6 +835,21 @@ pub fn spinner() -> Element {
         },
         width: Some(Dim::Px(24.0)),
         height: Some(Dim::Px(24.0)),
+        ..Default::default()
+    }
+}
+
+pub fn select(options: Vec<SelectOption>, selected: Option<usize>) -> Element {
+    Element {
+        kind: ElementKind::Select {
+            options,
+            selected,
+            placeholder: String::new(),
+        },
+        cursor: Some(CursorStyle::Pointer),
+        height: Some(Dim::Px(36.0)),
+        focusable: Some(true),
+        tab_index: Some(0),
         ..Default::default()
     }
 }
@@ -1595,7 +1631,9 @@ impl Element {
     }
     pub fn placeholder(mut self, text: &str) -> Self {
         match &mut self.kind {
-            ElementKind::TextInput { placeholder, .. } => {
+            ElementKind::TextInput { placeholder, .. }
+            | ElementKind::Textarea { placeholder, .. }
+            | ElementKind::Select { placeholder, .. } => {
                 *placeholder = text.to_string();
             }
             _ => {}
@@ -1698,6 +1736,33 @@ impl Element {
     }
     pub fn loading(mut self, on: bool) -> Self {
         self.loading = on;
+        self
+    }
+
+    // === Select/Dropdown properties ===
+
+    pub fn select_open(mut self, open: bool) -> Self {
+        self.select_open = open;
+        self
+    }
+    pub fn select_highlighted(mut self, idx: Option<usize>) -> Self {
+        self.select_highlighted = idx;
+        self
+    }
+    pub fn searchable(mut self, on: bool) -> Self {
+        self.select_searchable = on;
+        self
+    }
+    pub fn search_text(mut self, text: &str) -> Self {
+        self.select_search_text = text.to_string();
+        self
+    }
+    pub fn max_visible(mut self, n: usize) -> Self {
+        self.select_max_visible = n;
+        self
+    }
+    pub fn select_scroll_offset(mut self, offset: f32) -> Self {
+        self.select_scroll_offset = offset;
         self
     }
 

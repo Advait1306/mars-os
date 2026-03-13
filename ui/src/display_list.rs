@@ -1,6 +1,7 @@
 use crate::animator::Animator;
 use crate::color::Color;
 use crate::element::{Element, ElementKind, ButtonVariant, ImageSource, ProgressVariant, ShapeData, TextSpan};
+use crate::select_state::SelectOption;
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
     BlendMode, Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient,
@@ -1015,6 +1016,11 @@ fn emit_commands(
         }
     }
 
+    // Select / Dropdown
+    if let ElementKind::Select { ref options, selected, ref placeholder } = element.kind {
+        emit_select(element, &bounds, options, selected, placeholder, commands);
+    }
+
     // Focus ring (drawn for any focused, focusable element)
     // This is emitted after the element's own rendering but before children
     // The runtime sets a flag; here we check disabled
@@ -1053,6 +1059,246 @@ fn emit_commands(
     }
     if pop_translate {
         commands.push(DrawCommand::PopTranslate);
+    }
+}
+
+/// Emit draw commands for a Select/Dropdown element.
+fn emit_select(
+    element: &Element,
+    bounds: &Rect,
+    options: &[SelectOption],
+    selected: Option<usize>,
+    placeholder: &str,
+    commands: &mut Vec<DrawCommand>,
+) {
+    let border_color = if element.select_open {
+        Color { r: 66, g: 133, b: 244, a: 255 }
+    } else {
+        Color { r: 80, g: 80, b: 80, a: 255 }
+    };
+    let bg_color = element.background.unwrap_or(Color { r: 30, g: 30, b: 34, a: 255 });
+    let radii = if element.corner_radii.is_zero() {
+        CornerRadii::uniform(6.0)
+    } else {
+        element.corner_radii
+    };
+
+    // Trigger background
+    commands.push(DrawCommand::Rect {
+        bounds: bounds.clone(),
+        background: bg_color,
+        corner_radii: radii,
+        border: Some(Border { color: border_color, width: 1.0 }),
+        border_style: BorderStyle::Solid,
+    });
+
+    // Selected text or placeholder
+    let h_padding = 12.0_f32;
+    let chevron_space = 24.0_f32;
+    let text_max_w = (bounds.width - h_padding * 2.0 - chevron_space).max(0.0);
+    let (display_text, text_color) = if let Some(idx) = selected {
+        if idx < options.len() {
+            (
+                options[idx].label.clone(),
+                element.color.unwrap_or(crate::color::WHITE),
+            )
+        } else {
+            (
+                placeholder.to_string(),
+                Color { r: 160, g: 160, b: 160, a: 255 },
+            )
+        }
+    } else {
+        (
+            placeholder.to_string(),
+            Color { r: 160, g: 160, b: 160, a: 255 },
+        )
+    };
+
+    commands.push(DrawCommand::Text {
+        text: display_text,
+        position: Point { x: bounds.x + h_padding, y: bounds.y },
+        font_size: element.font_size,
+        color: text_color,
+        max_width: text_max_w,
+        font_family: element.font_family.clone(),
+        font_weight: element.font_weight,
+        font_italic: false,
+        line_height: Some(bounds.height),
+        text_align: None,
+        max_lines: Some(1),
+        text_overflow_ellipsis: true,
+        letter_spacing: element.letter_spacing,
+        word_spacing: 0.0,
+        underline: false,
+        strikethrough: false,
+        overline: false,
+        text_decoration_style: None,
+        text_decoration_color: None,
+        text_shadow: Vec::new(),
+        cursor_byte_offset: None,
+        selection_byte_range: None,
+        scroll_offset: 0.0,
+    });
+
+    // Chevron (downward arrow)
+    let chevron_x = bounds.x + bounds.width - chevron_space;
+    let chevron_cy = bounds.y + bounds.height / 2.0;
+    let chevron_size = 4.0_f32;
+    commands.push(DrawCommand::Path {
+        data: ShapeData {
+            path_data: format!(
+                "M {} {} L {} {} L {} {}",
+                chevron_x, chevron_cy - chevron_size,
+                chevron_x + chevron_size * 1.5, chevron_cy + chevron_size * 0.5,
+                chevron_x + chevron_size * 3.0, chevron_cy - chevron_size,
+            ),
+            fill: None,
+            stroke: Some((Color { r: 160, g: 160, b: 160, a: 255 }, 1.5)),
+            viewbox: None,
+        },
+        bounds: Rect {
+            x: chevron_x,
+            y: chevron_cy - chevron_size,
+            width: chevron_size * 3.0,
+            height: chevron_size * 2.0,
+        },
+    });
+
+    // Dropdown list (only when open)
+    if element.select_open {
+        let item_height = 32.0_f32;
+        let dropdown_gap = 4.0_f32;
+        let visible_count = options.len().min(element.select_max_visible);
+        let dropdown_h = visible_count as f32 * item_height + 8.0; // 4px top + 4px bottom padding
+        let dropdown_y = bounds.y + bounds.height + dropdown_gap;
+        let dropdown_bounds = Rect {
+            x: bounds.x,
+            y: dropdown_y,
+            width: bounds.width,
+            height: dropdown_h,
+        };
+
+        // Dropdown shadow
+        commands.push(DrawCommand::BoxShadow {
+            bounds: dropdown_bounds.clone(),
+            corner_radii: radii,
+            blur: 8.0,
+            spread: 0.0,
+            color: Color { r: 0, g: 0, b: 0, a: 80 },
+            offset: Point { x: 0.0, y: 2.0 },
+        });
+
+        // Dropdown background
+        commands.push(DrawCommand::Rect {
+            bounds: dropdown_bounds.clone(),
+            background: Color { r: 38, g: 38, b: 42, a: 255 },
+            corner_radii: radii,
+            border: Some(Border {
+                color: Color { r: 60, g: 60, b: 60, a: 255 },
+                width: 1.0,
+            }),
+            border_style: BorderStyle::Solid,
+        });
+
+        // Clip dropdown content
+        commands.push(DrawCommand::PushClip {
+            bounds: dropdown_bounds.clone(),
+            corner_radii: radii,
+        });
+
+        // Render visible options
+        let scroll_offset = element.select_scroll_offset;
+        let content_y = dropdown_y + 4.0; // top padding
+
+        for (i, opt) in options.iter().enumerate() {
+            let item_y = content_y + i as f32 * item_height - scroll_offset;
+
+            // Skip items outside viewport
+            if item_y + item_height < dropdown_y || item_y > dropdown_y + dropdown_h {
+                continue;
+            }
+
+            // Highlight background
+            let is_highlighted = element.select_highlighted == Some(i);
+            let is_selected = selected == Some(i);
+            if is_highlighted {
+                commands.push(DrawCommand::Rect {
+                    bounds: Rect {
+                        x: bounds.x + 4.0,
+                        y: item_y,
+                        width: bounds.width - 8.0,
+                        height: item_height,
+                    },
+                    background: Color { r: 55, g: 55, b: 60, a: 255 },
+                    corner_radii: CornerRadii::uniform(4.0),
+                    border: None,
+                    border_style: BorderStyle::Solid,
+                });
+            }
+
+            // Option text
+            let opt_color = if opt.disabled {
+                Color { r: 100, g: 100, b: 100, a: 255 }
+            } else if is_selected {
+                Color { r: 66, g: 133, b: 244, a: 255 }
+            } else {
+                element.color.unwrap_or(crate::color::WHITE)
+            };
+
+            commands.push(DrawCommand::Text {
+                text: opt.label.clone(),
+                position: Point { x: bounds.x + h_padding, y: item_y },
+                font_size: element.font_size,
+                color: opt_color,
+                max_width: text_max_w,
+                font_family: element.font_family.clone(),
+                font_weight: if is_selected { Some(500) } else { element.font_weight },
+                font_italic: false,
+                line_height: Some(item_height),
+                text_align: None,
+                max_lines: Some(1),
+                text_overflow_ellipsis: true,
+                letter_spacing: element.letter_spacing,
+                word_spacing: 0.0,
+                underline: false,
+                strikethrough: false,
+                overline: false,
+                text_decoration_style: None,
+                text_decoration_color: None,
+                text_shadow: Vec::new(),
+                cursor_byte_offset: None,
+                selection_byte_range: None,
+                scroll_offset: 0.0,
+            });
+
+            // Checkmark for selected option
+            if is_selected {
+                let check_x = bounds.x + bounds.width - 28.0;
+                let check_cy = item_y + item_height / 2.0;
+                commands.push(DrawCommand::Path {
+                    data: ShapeData {
+                        path_data: format!(
+                            "M {} {} L {} {} L {} {}",
+                            check_x, check_cy,
+                            check_x + 3.0, check_cy + 3.0,
+                            check_x + 8.0, check_cy - 4.0
+                        ),
+                        fill: None,
+                        stroke: Some((Color { r: 66, g: 133, b: 244, a: 255 }, 1.5)),
+                        viewbox: None,
+                    },
+                    bounds: Rect {
+                        x: check_x,
+                        y: check_cy - 4.0,
+                        width: 8.0,
+                        height: 7.0,
+                    },
+                });
+            }
+        }
+
+        commands.push(DrawCommand::PopClip);
     }
 }
 

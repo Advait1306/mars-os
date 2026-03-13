@@ -157,6 +157,14 @@ fn build_taffy_node(
             tree.new_leaf_with_context(style, make_ctx(display_text, element))
                 .unwrap()
         }
+        ElementKind::Select { options, selected, placeholder } => {
+            let display_text = selected
+                .and_then(|i| options.get(i))
+                .map(|o| o.label.clone())
+                .unwrap_or_else(|| placeholder.clone());
+            tree.new_leaf_with_context(style, make_ctx(display_text, element))
+                .unwrap()
+        }
         _ => {
             tree.new_with_children(style, &child_ids).unwrap()
         }
