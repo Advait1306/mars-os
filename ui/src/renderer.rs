@@ -11,9 +11,17 @@ use crate::display_list::{DrawCommand, Point};
 use crate::layout::Rect;
 use crate::element::ImageSource;
 
+struct CacheEntry {
+    image: skia_safe::Image,
+    last_used: std::time::Instant,
+    byte_size: usize,
+}
+
 pub struct SkiaRenderer {
     font_collection: FontCollection,
-    image_cache: HashMap<String, skia_safe::Image>,
+    image_cache: HashMap<u64, CacheEntry>,
+    cache_total_bytes: usize,
+    cache_max_bytes: usize,
 }
 
 impl SkiaRenderer {
@@ -23,6 +31,8 @@ impl SkiaRenderer {
         Self {
             font_collection,
             image_cache: HashMap::new(),
+            cache_total_bytes: 0,
+            cache_max_bytes: 64 * 1024 * 1024, // 64 MB
         }
     }
 
@@ -50,8 +60,8 @@ impl SkiaRenderer {
                         *text_decoration_style, text_decoration_color.as_ref(),
                         text_shadow, *cursor_byte_offset, *selection_byte_range, *scroll_offset);
                 }
-                DrawCommand::Image { source, bounds } => {
-                    self.draw_image(canvas, source, bounds);
+                DrawCommand::Image { source, bounds, tint, image_fit } => {
+                    self.draw_image(canvas, source, bounds, tint.as_ref(), *image_fit);
                 }
                 DrawCommand::GradientRect { bounds, gradient, corner_radii } => {
                     self.draw_gradient_rect(canvas, bounds, gradient, corner_radii);
@@ -739,25 +749,82 @@ impl SkiaRenderer {
         self.font_collection.clone()
     }
 
-    fn draw_image(&mut self, canvas: &Canvas, source: &ImageSource, bounds: &Rect) {
-        let cache_key = match source {
-            ImageSource::Svg(s) => format!("svg:{}", &s[..s.len().min(64)]),
-            ImageSource::File(p) => format!("file:{}", p),
+    fn draw_image(
+        &mut self,
+        canvas: &Canvas,
+        source: &ImageSource,
+        bounds: &Rect,
+        tint: Option<&Color>,
+        image_fit: crate::element::ImageFit,
+    ) {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        let tw = bounds.width as u32;
+        let th = bounds.height as u32;
+
+        // Hash-based cache key including dimensions
+        let cache_key = {
+            let mut hasher = DefaultHasher::new();
+            match source {
+                ImageSource::Svg(s) => { 0u8.hash(&mut hasher); s.hash(&mut hasher); }
+                ImageSource::File(p) => { 1u8.hash(&mut hasher); p.hash(&mut hasher); }
+            }
+            tw.hash(&mut hasher);
+            th.hash(&mut hasher);
+            hasher.finish()
         };
 
         if !self.image_cache.contains_key(&cache_key) {
             let img = match source {
-                ImageSource::Svg(data) => load_svg(data.as_bytes(), (bounds.width as u32, bounds.height as u32)),
-                ImageSource::File(path) => load_image_file(path, (bounds.width as u32, bounds.height as u32)),
+                ImageSource::Svg(data) => load_svg(data.as_bytes(), (tw, th)),
+                ImageSource::File(path) => load_image_file(path, (tw, th)),
             };
             if let Some(img) = img {
-                self.image_cache.insert(cache_key.clone(), img);
+                let byte_size = (img.width() * img.height() * 4) as usize;
+                // LRU eviction
+                while self.cache_total_bytes + byte_size > self.cache_max_bytes && !self.image_cache.is_empty() {
+                    let oldest_key = self.image_cache.iter()
+                        .min_by_key(|(_, e)| e.last_used)
+                        .map(|(k, _)| *k);
+                    if let Some(key) = oldest_key {
+                        if let Some(evicted) = self.image_cache.remove(&key) {
+                            self.cache_total_bytes -= evicted.byte_size;
+                        }
+                    }
+                }
+                self.cache_total_bytes += byte_size;
+                self.image_cache.insert(cache_key, CacheEntry {
+                    image: img,
+                    last_used: std::time::Instant::now(),
+                    byte_size,
+                });
             }
         }
 
-        if let Some(img) = self.image_cache.get(&cache_key) {
-            let dst = skia_safe::Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height);
-            canvas.draw_image_rect(img, None, dst, &Paint::default());
+        if let Some(entry) = self.image_cache.get_mut(&cache_key) {
+            entry.last_used = std::time::Instant::now();
+            let img = &entry.image;
+
+            // Compute destination rect based on image_fit
+            let dst = compute_image_fit_rect(
+                img.width() as f32,
+                img.height() as f32,
+                bounds,
+                image_fit,
+            );
+
+            let mut paint = Paint::default();
+            // Apply tint via SrcIn color filter (tints opaque areas)
+            if let Some(tint_color) = tint {
+                if let Some(cf) = skia_safe::color_filters::blend(
+                    to_skia_color(tint_color),
+                    skia_safe::BlendMode::SrcIn,
+                ) {
+                    paint.set_color_filter(cf);
+                }
+            }
+            canvas.draw_image_rect(img, None, dst, &paint);
         }
     }
 
@@ -1082,6 +1149,42 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
     }
 
     current
+}
+
+fn compute_image_fit_rect(
+    img_w: f32,
+    img_h: f32,
+    bounds: &Rect,
+    fit: crate::element::ImageFit,
+) -> skia_safe::Rect {
+    match fit {
+        crate::element::ImageFit::Fill => {
+            skia_safe::Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height)
+        }
+        crate::element::ImageFit::Contain | crate::element::ImageFit::ScaleDown => {
+            let scale_x = bounds.width / img_w;
+            let scale_y = bounds.height / img_h;
+            let mut scale = scale_x.min(scale_y);
+            if fit == crate::element::ImageFit::ScaleDown {
+                scale = scale.min(1.0);
+            }
+            let w = img_w * scale;
+            let h = img_h * scale;
+            let x = bounds.x + (bounds.width - w) / 2.0;
+            let y = bounds.y + (bounds.height - h) / 2.0;
+            skia_safe::Rect::from_xywh(x, y, w, h)
+        }
+        crate::element::ImageFit::Cover => {
+            let scale_x = bounds.width / img_w;
+            let scale_y = bounds.height / img_h;
+            let scale = scale_x.max(scale_y);
+            let w = img_w * scale;
+            let h = img_h * scale;
+            let x = bounds.x + (bounds.width - w) / 2.0;
+            let y = bounds.y + (bounds.height - h) / 2.0;
+            skia_safe::Rect::from_xywh(x, y, w, h)
+        }
+    }
 }
 
 fn to_skia_blend_mode(mode: crate::style::BlendMode) -> skia_safe::BlendMode {

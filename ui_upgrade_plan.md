@@ -48,7 +48,17 @@ Phase 6 (remaining properties) is DONE:
 - BlendMode enum (16 CSS blend modes mapped to Skia) with PushBlendMode/PopBlendMode
 - Color utilities: `from_hex()`, `from_hsl()`, `from_hsla()`, `with_alpha()`, `lighter()`, `darker()`
 
-**Plan 4 is now COMPLETE.** All 6 phases implemented. Next plan: **5-svg-rendering**.
+**Plan 4 is now COMPLETE.** All 6 phases implemented.
+
+### Plan 5-svg-rendering: IN PROGRESS
+Phase 1 (Tier 1 improvements) is DONE:
+- Fixed cache key generation: content hash + dimensions instead of truncated string
+- LRU cache eviction with 64MB byte budget
+- Color tinting via `tint(color)` builder using SrcIn blend color filter
+- ImageFit enum (Contain, Cover, Fill, ScaleDown) with `image_fit()` builder
+- Proper image fit computation for all modes
+
+Next phase: **Phase 2** (SVG path parser and vector shapes).
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

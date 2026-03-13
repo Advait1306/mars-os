@@ -61,6 +61,8 @@ pub enum DrawCommand {
     Image {
         source: ImageSource,
         bounds: Rect,
+        tint: Option<Color>,
+        image_fit: crate::element::ImageFit,
     },
     GradientRect {
         bounds: Rect,
@@ -406,6 +408,8 @@ fn emit_commands(
         commands.push(DrawCommand::Image {
             source: source.clone(),
             bounds: bounds.clone(),
+            tint: element.tint,
+            image_fit: element.image_fit,
         });
     }
 

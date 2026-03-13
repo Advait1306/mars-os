@@ -51,6 +51,14 @@ pub enum ImageSource {
     File(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ImageFit {
+    Contain,
+    Cover,
+    Fill,
+    ScaleDown,
+}
+
 pub struct Element {
     pub kind: ElementKind,
     pub key: Option<String>,
@@ -125,6 +133,8 @@ pub struct Element {
     /// Transform origin as fraction of element size (0.0–1.0). Default: center (0.5, 0.5).
     pub transform_origin: (f32, f32),
     pub clip: bool,
+    pub tint: Option<Color>,
+    pub image_fit: ImageFit,
 
     // Text-specific
     pub font_size: f32,
@@ -302,6 +312,8 @@ impl Default for Element {
             transforms: Vec::new(),
             transform_origin: (0.5, 0.5),
             clip: false,
+            tint: None,
+            image_fit: ImageFit::Contain,
             font_size: 14.0,
             color: None,
             font_family: None,
@@ -964,6 +976,14 @@ impl Element {
     }
     pub fn transform_origin(mut self, x: f32, y: f32) -> Self {
         self.transform_origin = (x, y);
+        self
+    }
+    pub fn tint(mut self, color: Color) -> Self {
+        self.tint = Some(color);
+        self
+    }
+    pub fn image_fit(mut self, fit: ImageFit) -> Self {
+        self.image_fit = fit;
         self
     }
     pub fn clip(mut self) -> Self {
