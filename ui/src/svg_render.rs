@@ -10,11 +10,621 @@ use resvg::usvg;
 use skia_safe::{
     Canvas, Paint, PaintStyle, Path, PathFillType, Matrix, ImageFilter,
     canvas::SaveLayerRec, gradient_shader, TileMode,
-    PictureRecorder,
+    PictureRecorder, BlendMode,
 };
 
 use crate::color::Color;
 use crate::layout::Rect;
+
+// =============================================================================
+// SVG DOM — Tier 3: Dynamic SVG manipulation
+// =============================================================================
+
+/// Paint definition for SVG elements.
+#[derive(Debug, Clone)]
+pub enum SvgPaint {
+    Solid(Color),
+    None,
+}
+
+/// Stroke definition for SVG elements.
+#[derive(Debug, Clone)]
+pub struct SvgStroke {
+    pub paint: SvgPaint,
+    pub width: f32,
+}
+
+/// The kind of an SVG element in the document model.
+#[derive(Debug, Clone)]
+pub enum SvgElementKind {
+    Group,
+    Path { data: Vec<u8> },
+    Text { content: String },
+    Image,
+}
+
+/// A single element in the SVG document model.
+#[derive(Debug, Clone)]
+pub struct SvgElement {
+    pub id: Option<String>,
+    pub kind: SvgElementKind,
+    pub transform: [f32; 6], // affine: [a, b, c, d, e, f]
+    pub opacity: f32,
+    pub fill: Option<SvgPaint>,
+    pub stroke: Option<SvgStroke>,
+    pub visible: bool,
+    pub children: Vec<usize>, // indices into SvgDocument.elements
+    pub parent: Option<usize>,
+    /// Bounding box in local coordinates (for hit testing).
+    pub bounds: Option<[f32; 4]>, // [x, y, w, h]
+}
+
+impl SvgElement {
+    fn new(kind: SvgElementKind) -> Self {
+        Self {
+            id: None,
+            kind,
+            transform: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], // identity
+            opacity: 1.0,
+            fill: None,
+            stroke: None,
+            visible: true,
+            children: Vec::new(),
+            parent: None,
+            bounds: None,
+        }
+    }
+}
+
+/// A lightweight SVG document model supporting querying and modification.
+///
+/// Parses a usvg tree into a flat element list with ID-based lookup.
+/// Modifications mark the document dirty, and `update()` re-records the
+/// Skia Picture for rendering.
+pub struct SvgDocument {
+    /// Original SVG data for re-parsing if needed.
+    svg_data: Vec<u8>,
+    /// usvg tree (source of truth for rendering unmodified elements).
+    tree: usvg::Tree,
+    /// Flat element list (mirrors the usvg tree structure).
+    elements: Vec<SvgElement>,
+    /// Map from SVG id attribute to element index.
+    id_map: HashMap<String, usize>,
+    /// Whether modifications require re-recording.
+    dirty: bool,
+    /// Cached Skia Picture for rendering.
+    picture: Option<skia_safe::Picture>,
+    /// Intrinsic dimensions.
+    intrinsic_width: f32,
+    intrinsic_height: f32,
+}
+
+impl SvgDocument {
+    /// Parse SVG data and build the document model.
+    pub fn from_data(svg_data: &[u8]) -> Option<Self> {
+        let opt = usvg::Options::default();
+        let tree = usvg::Tree::from_data(svg_data, &opt).ok()?;
+        let size = tree.size();
+
+        let mut doc = Self {
+            svg_data: svg_data.to_vec(),
+            tree,
+            elements: Vec::new(),
+            id_map: HashMap::new(),
+            dirty: true,
+            picture: None,
+            intrinsic_width: size.width(),
+            intrinsic_height: size.height(),
+        };
+
+        // Walk the usvg tree and build the flat element list
+        let root_indices = doc.walk_group(doc.tree.root(), None);
+        // Create a virtual root group to hold top-level children
+        let mut root = SvgElement::new(SvgElementKind::Group);
+        root.children = root_indices;
+        let root_idx = doc.elements.len();
+        doc.elements.push(root);
+        // Update parent pointers for root children
+        for &child_idx in &doc.elements[root_idx].children.clone() {
+            doc.elements[child_idx].parent = Some(root_idx);
+        }
+
+        doc.update();
+        Some(doc)
+    }
+
+    /// Walk a usvg group and add all children to the element list.
+    /// Returns the indices of the direct children added.
+    fn walk_group(&mut self, group: &usvg::Group, _parent: Option<usize>) -> Vec<usize> {
+        let mut child_indices = Vec::new();
+
+        for child in group.children() {
+            match child {
+                usvg::Node::Group(ref g) => {
+                    let mut elem = SvgElement::new(SvgElementKind::Group);
+                    elem.id = g.id().to_string().into_none_if_empty();
+                    let ts = g.transform();
+                    elem.transform = [ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty];
+                    elem.opacity = g.opacity().get() as f32;
+                    let idx = self.elements.len();
+                    self.elements.push(elem);
+
+                    // Recurse into children
+                    let sub_children = self.walk_group(g, Some(idx));
+                    self.elements[idx].children = sub_children.clone();
+                    for &ci in &sub_children {
+                        self.elements[ci].parent = Some(idx);
+                    }
+
+                    if let Some(id) = &self.elements[idx].id {
+                        self.id_map.insert(id.clone(), idx);
+                    }
+                    child_indices.push(idx);
+                }
+                usvg::Node::Path(ref p) => {
+                    let mut elem = SvgElement::new(SvgElementKind::Path {
+                        data: Vec::new(), // Path data stored in usvg tree
+                    });
+                    elem.id = p.id().to_string().into_none_if_empty();
+                    let ts = p.abs_transform();
+                    elem.transform = [ts.sx, ts.ky, ts.kx, ts.sy, ts.tx, ts.ty];
+                    // Extract fill color
+                    if let Some(ref fill) = p.fill() {
+                        if let usvg::Paint::Color(c) = fill.paint() {
+                            elem.fill = Some(SvgPaint::Solid(Color::new(c.red, c.green, c.blue, 255)));
+                        }
+                    }
+                    // Extract stroke
+                    if let Some(ref stroke) = p.stroke() {
+                        if let usvg::Paint::Color(c) = stroke.paint() {
+                            elem.stroke = Some(SvgStroke {
+                                paint: SvgPaint::Solid(Color::new(c.red, c.green, c.blue, 255)),
+                                width: stroke.width().get() as f32,
+                            });
+                        }
+                    }
+                    // Bounding box
+                    let bbox = p.bounding_box();
+                    elem.bounds = Some([
+                        bbox.left() as f32,
+                        bbox.top() as f32,
+                        bbox.width() as f32,
+                        bbox.height() as f32,
+                    ]);
+
+                    let idx = self.elements.len();
+                    if let Some(id) = &elem.id {
+                        self.id_map.insert(id.clone(), idx);
+                    }
+                    self.elements.push(elem);
+                    child_indices.push(idx);
+                }
+                usvg::Node::Text(ref t) => {
+                    let mut elem = SvgElement::new(SvgElementKind::Text {
+                        content: String::new(),
+                    });
+                    elem.id = t.id().to_string().into_none_if_empty();
+
+                    let idx = self.elements.len();
+                    if let Some(id) = &elem.id {
+                        self.id_map.insert(id.clone(), idx);
+                    }
+                    self.elements.push(elem);
+                    child_indices.push(idx);
+                }
+                usvg::Node::Image(ref img) => {
+                    let mut elem = SvgElement::new(SvgElementKind::Image);
+                    elem.id = img.id().to_string().into_none_if_empty();
+
+                    let idx = self.elements.len();
+                    if let Some(id) = &elem.id {
+                        self.id_map.insert(id.clone(), idx);
+                    }
+                    self.elements.push(elem);
+                    child_indices.push(idx);
+                }
+            }
+        }
+
+        child_indices
+    }
+
+    // === Query API ===
+
+    /// Look up an element by its SVG `id` attribute.
+    pub fn element_by_id(&self, id: &str) -> Option<&SvgElement> {
+        self.id_map.get(id).map(|&idx| &self.elements[idx])
+    }
+
+    /// Look up an element by its SVG `id` attribute (mutable).
+    pub fn element_by_id_mut(&mut self, id: &str) -> Option<&mut SvgElement> {
+        self.id_map.get(id).copied().map(move |idx| &mut self.elements[idx])
+    }
+
+    /// Get all element IDs in the document.
+    pub fn element_ids(&self) -> Vec<&str> {
+        self.id_map.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get the number of elements.
+    pub fn element_count(&self) -> usize {
+        self.elements.len()
+    }
+
+    // === Modification API ===
+
+    /// Set the fill color of an element by ID.
+    pub fn set_fill(&mut self, id: &str, color: Color) {
+        if let Some(&idx) = self.id_map.get(id) {
+            self.elements[idx].fill = Some(SvgPaint::Solid(color));
+            self.dirty = true;
+        }
+    }
+
+    /// Set the stroke color and width of an element by ID.
+    pub fn set_stroke(&mut self, id: &str, color: Color, width: f32) {
+        if let Some(&idx) = self.id_map.get(id) {
+            self.elements[idx].stroke = Some(SvgStroke {
+                paint: SvgPaint::Solid(color),
+                width,
+            });
+            self.dirty = true;
+        }
+    }
+
+    /// Set the opacity of an element by ID.
+    pub fn set_opacity(&mut self, id: &str, opacity: f32) {
+        if let Some(&idx) = self.id_map.get(id) {
+            self.elements[idx].opacity = opacity;
+            self.dirty = true;
+        }
+    }
+
+    /// Set the visibility of an element by ID.
+    pub fn set_visible(&mut self, id: &str, visible: bool) {
+        if let Some(&idx) = self.id_map.get(id) {
+            self.elements[idx].visible = visible;
+            self.dirty = true;
+        }
+    }
+
+    /// Set the transform of an element by ID (affine: [a, b, c, d, e, f]).
+    pub fn set_transform(&mut self, id: &str, transform: [f32; 6]) {
+        if let Some(&idx) = self.id_map.get(id) {
+            self.elements[idx].transform = transform;
+            self.dirty = true;
+        }
+    }
+
+    /// Set the text content of a text element by ID.
+    pub fn set_text(&mut self, id: &str, content: &str) {
+        if let Some(&idx) = self.id_map.get(id) {
+            if let SvgElementKind::Text { content: ref mut c } = self.elements[idx].kind {
+                *c = content.to_string();
+                self.dirty = true;
+            }
+        }
+    }
+
+    // === Rendering ===
+
+    /// Re-record the Skia Picture after modifications.
+    /// Only does work if the document is dirty.
+    pub fn update(&mut self) {
+        if !self.dirty && self.picture.is_some() {
+            return;
+        }
+
+        let bounds = skia_safe::Rect::from_wh(self.intrinsic_width, self.intrinsic_height);
+        let mut recorder = PictureRecorder::new();
+        {
+            let canvas = recorder.begin_recording(bounds, None);
+            // Re-render from the usvg tree, applying our overrides
+            self.render_with_overrides(canvas, self.tree.root());
+        }
+        self.picture = recorder.finish_recording_as_picture(Some(&bounds));
+        self.dirty = false;
+    }
+
+    /// Render the usvg tree with element-level overrides applied.
+    fn render_with_overrides(&self, canvas: &Canvas, group: &usvg::Group) {
+        for child in group.children() {
+            let id_str = match &child {
+                usvg::Node::Group(g) => g.id().to_string(),
+                usvg::Node::Path(p) => p.id().to_string(),
+                usvg::Node::Text(t) => t.id().to_string(),
+                usvg::Node::Image(i) => i.id().to_string(),
+            };
+
+            // Check for overrides
+            let override_elem = if !id_str.is_empty() {
+                self.id_map.get(&id_str).map(|&idx| &self.elements[idx])
+            } else {
+                None
+            };
+
+            // Skip invisible elements
+            if let Some(elem) = override_elem {
+                if !elem.visible {
+                    continue;
+                }
+            }
+
+            match child {
+                usvg::Node::Group(ref g) => {
+                    canvas.save();
+
+                    // Apply transform (override or original)
+                    if let Some(elem) = override_elem {
+                        let t = elem.transform;
+                        let mat = Matrix::new_all(t[0], t[2], t[4], t[1], t[3], t[5], 0.0, 0.0, 1.0);
+                        canvas.concat(&mat);
+                    } else {
+                        let ts = g.transform();
+                        canvas.concat(&usvg_transform_to_matrix(ts));
+                    }
+
+                    // Apply opacity override
+                    let opacity = override_elem.map(|e| e.opacity).unwrap_or(g.opacity().get() as f32);
+                    if opacity < 1.0 {
+                        let mut paint = Paint::default();
+                        paint.set_alpha_f(opacity);
+                        let rec = SaveLayerRec::default().paint(&paint);
+                        canvas.save_layer(&rec);
+                    }
+
+                    // Clip path
+                    if let Some(ref clip_path) = g.clip_path() {
+                        for child_node in clip_path.root().children() {
+                            if let usvg::Node::Path(ref cp) = child_node {
+                                let clip_skia = usvg_path_to_skia(cp);
+                                canvas.clip_path(&clip_skia, skia_safe::ClipOp::Intersect, true);
+                            }
+                        }
+                    }
+
+                    // Filters
+                    if !g.filters().is_empty() {
+                        if let Some(filter) = build_filters(g.filters()) {
+                            let mut fpaint = Paint::default();
+                            fpaint.set_image_filter(filter);
+                            let rec = SaveLayerRec::default().paint(&fpaint);
+                            canvas.save_layer(&rec);
+                        }
+                    }
+
+                    // Mask
+                    if let Some(ref mask) = g.mask() {
+                        apply_mask(canvas, mask);
+                    }
+
+                    self.render_with_overrides(canvas, g);
+
+                    if !g.filters().is_empty() {
+                        canvas.restore();
+                    }
+                    if opacity < 1.0 {
+                        canvas.restore();
+                    }
+                    canvas.restore();
+                }
+                usvg::Node::Path(ref p) => {
+                    let path = usvg_path_to_skia(p);
+
+                    // Fill with override color or original
+                    let fill_override = override_elem.and_then(|e| e.fill.as_ref());
+                    if let Some(SvgPaint::Solid(c)) = fill_override {
+                        let mut paint = Paint::default();
+                        paint.set_anti_alias(true);
+                        paint.set_color(skia_safe::Color::from_argb(c.a, c.r, c.g, c.b));
+                        canvas.draw_path(&path, &paint);
+                    } else if let Some(ref fill) = p.fill() {
+                        if let Some(paint) = usvg_fill_to_paint(fill, p) {
+                            canvas.draw_path(&path, &paint);
+                        }
+                    }
+
+                    // Stroke with override or original
+                    let stroke_override = override_elem.and_then(|e| e.stroke.as_ref());
+                    if let Some(ref so) = stroke_override {
+                        if let SvgPaint::Solid(c) = &so.paint {
+                            let mut paint = Paint::default();
+                            paint.set_anti_alias(true);
+                            paint.set_style(PaintStyle::Stroke);
+                            paint.set_stroke_width(so.width);
+                            paint.set_color(skia_safe::Color::from_argb(c.a, c.r, c.g, c.b));
+                            canvas.draw_path(&path, &paint);
+                        }
+                    } else if let Some(ref stroke) = p.stroke() {
+                        if let Some(paint) = usvg_stroke_to_paint(stroke, p) {
+                            canvas.draw_path(&path, &paint);
+                        }
+                    }
+                }
+                usvg::Node::Text(ref text) => render_text(canvas, text),
+                usvg::Node::Image(ref img) => render_image(canvas, img),
+            }
+        }
+    }
+
+    /// Draw the document to a canvas within the given bounds.
+    pub fn draw(&self, canvas: &Canvas, dest: &Rect) {
+        if let Some(ref picture) = self.picture {
+            canvas.save();
+            let sx = dest.width / self.intrinsic_width;
+            let sy = dest.height / self.intrinsic_height;
+            canvas.translate((dest.x, dest.y));
+            canvas.scale((sx, sy));
+            canvas.draw_picture(picture, None, None);
+            canvas.restore();
+        }
+    }
+
+    /// Draw with optional tint.
+    pub fn draw_tinted(&self, canvas: &Canvas, dest: &Rect, tint: Option<&Color>) {
+        if let Some(ref picture) = self.picture {
+            canvas.save();
+            let sx = dest.width / self.intrinsic_width;
+            let sy = dest.height / self.intrinsic_height;
+            canvas.translate((dest.x, dest.y));
+            canvas.scale((sx, sy));
+
+            if let Some(tint_color) = tint {
+                let paint = Paint::default();
+                let rec = SaveLayerRec::default().paint(&paint);
+                canvas.save_layer(&rec);
+                canvas.draw_picture(picture, None, None);
+                let mut tint_paint = Paint::default();
+                tint_paint.set_color(skia_safe::Color::from_argb(
+                    tint_color.a, tint_color.r, tint_color.g, tint_color.b,
+                ));
+                tint_paint.set_blend_mode(BlendMode::SrcIn);
+                canvas.draw_paint(&tint_paint);
+                canvas.restore();
+            } else {
+                canvas.draw_picture(picture, None, None);
+            }
+
+            canvas.restore();
+        }
+    }
+
+    /// Draw with image fit computation.
+    pub fn draw_fit(
+        &self,
+        canvas: &Canvas,
+        dest: &Rect,
+        tint: Option<&Color>,
+        fit: crate::element::ImageFit,
+    ) {
+        let fitted = compute_vector_fit(
+            self.intrinsic_width,
+            self.intrinsic_height,
+            dest,
+            fit,
+        );
+        self.draw_tinted(canvas, &fitted, tint);
+    }
+
+    // === Hit Testing ===
+
+    /// Test if a point (in document coordinates) hits any element.
+    /// Returns the ID of the topmost element hit, if any.
+    pub fn hit_test(&self, x: f32, y: f32) -> Option<&str> {
+        // Walk elements in reverse (topmost first)
+        for elem in self.elements.iter().rev() {
+            if !elem.visible {
+                continue;
+            }
+            if let Some(id) = &elem.id {
+                if let Some(bounds) = &elem.bounds {
+                    let [bx, by, bw, bh] = *bounds;
+                    if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
+                        return Some(id.as_str());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Hit test in destination coordinates (applies inverse scaling).
+    pub fn hit_test_in_bounds(&self, point_x: f32, point_y: f32, dest: &Rect) -> Option<&str> {
+        let sx = self.intrinsic_width / dest.width;
+        let sy = self.intrinsic_height / dest.height;
+        let local_x = (point_x - dest.x) * sx;
+        let local_y = (point_y - dest.y) * sy;
+        self.hit_test(local_x, local_y)
+    }
+
+    /// Whether the document needs re-recording.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Get intrinsic dimensions.
+    pub fn intrinsic_size(&self) -> (f32, f32) {
+        (self.intrinsic_width, self.intrinsic_height)
+    }
+}
+
+/// Helper trait to convert empty strings to None.
+trait IntoNoneIfEmpty {
+    fn into_none_if_empty(self) -> Option<String>;
+}
+
+impl IntoNoneIfEmpty for String {
+    fn into_none_if_empty(self) -> Option<String> {
+        if self.is_empty() { None } else { Some(self) }
+    }
+}
+
+/// Helper: extract fill paint from a usvg path for the override renderer.
+fn usvg_fill_to_paint(fill: &usvg::Fill, path: &usvg::Path) -> Option<Paint> {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    match fill.paint() {
+        usvg::Paint::Color(c) => {
+            let alpha = (fill.opacity().get() * 255.0) as u8;
+            paint.set_color(skia_safe::Color::from_argb(alpha, c.red, c.green, c.blue));
+        }
+        usvg::Paint::LinearGradient(_) | usvg::Paint::RadialGradient(_) | usvg::Paint::Pattern(_) => {
+            if let Some(shader) = usvg_paint_to_skia(&fill.paint(), fill.opacity(), &path.bounding_box()) {
+                paint.set_shader(shader);
+            } else {
+                return None;
+            }
+        }
+    }
+    match fill.rule() {
+        usvg::FillRule::NonZero => paint.set_style(PaintStyle::Fill),
+        usvg::FillRule::EvenOdd => paint.set_style(PaintStyle::Fill),
+    };
+    Some(paint)
+}
+
+/// Helper: extract stroke paint from a usvg path for the override renderer.
+fn usvg_stroke_to_paint(stroke: &usvg::Stroke, path: &usvg::Path) -> Option<Paint> {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_style(PaintStyle::Stroke);
+    paint.set_stroke_width(stroke.width().get() as f32);
+    match stroke.paint() {
+        usvg::Paint::Color(c) => {
+            let alpha = (stroke.opacity().get() * 255.0) as u8;
+            paint.set_color(skia_safe::Color::from_argb(alpha, c.red, c.green, c.blue));
+        }
+        _ => {
+            if let Some(shader) = usvg_paint_to_skia(&stroke.paint(), stroke.opacity(), &path.bounding_box()) {
+                paint.set_shader(shader);
+            } else {
+                return None;
+            }
+        }
+    }
+    // Line cap
+    paint.set_stroke_cap(match stroke.linecap() {
+        usvg::LineCap::Butt => skia_safe::paint::Cap::Butt,
+        usvg::LineCap::Round => skia_safe::paint::Cap::Round,
+        usvg::LineCap::Square => skia_safe::paint::Cap::Square,
+    });
+    // Line join
+    paint.set_stroke_join(match stroke.linejoin() {
+        usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => skia_safe::paint::Join::Miter,
+        usvg::LineJoin::Round => skia_safe::paint::Join::Round,
+        usvg::LineJoin::Bevel => skia_safe::paint::Join::Bevel,
+    });
+    // Dash
+    if let Some(ref dash) = stroke.dasharray() {
+        let intervals: Vec<f32> = dash.iter().map(|v| *v as f32).collect();
+        if intervals.len() >= 2 {
+            if let Some(effect) = skia_safe::PathEffect::dash(&intervals, stroke.dashoffset() as f32) {
+                paint.set_path_effect(effect);
+            }
+        }
+    }
+    Some(paint)
+}
 
 /// A cached vector SVG, stored as a Skia Picture for resolution-independent replay.
 pub struct VectorSvg {

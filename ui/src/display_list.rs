@@ -169,6 +169,13 @@ pub enum DrawCommand {
         bounds: Rect,
         image: BorderImage,
     },
+    /// Dynamic SVG document.
+    SvgDocument {
+        document: std::sync::Arc<std::sync::Mutex<crate::svg_render::SvgDocument>>,
+        bounds: Rect,
+        tint: Option<Color>,
+        image_fit: crate::element::ImageFit,
+    },
     /// Focus ring drawn around an element.
     FocusRing {
         bounds: Rect,
@@ -522,6 +529,16 @@ fn emit_commands(
     if let ElementKind::Icon { ref name } = element.kind {
         commands.push(DrawCommand::Icon {
             name: name.clone(),
+            bounds: bounds.clone(),
+            tint: element.tint,
+            image_fit: element.image_fit,
+        });
+    }
+
+    // SVG Document (dynamic)
+    if let ElementKind::SvgDocument { ref document } = element.kind {
+        commands.push(DrawCommand::SvgDocument {
+            document: document.clone(),
             bounds: bounds.clone(),
             tint: element.tint,
             image_fit: element.image_fit,

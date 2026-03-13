@@ -40,6 +40,7 @@ pub use animation::{Animation, Easing, From, To};
 pub use select_state::{SelectOption, SelectGroup, SelectState};
 pub use theme::Theme;
 pub use icon_registry::{IconRegistry, IconPack, ResolvedIcon};
+pub use svg_render::{SvgDocument, SvgElement, SvgElementKind, SvgPaint, SvgStroke};
 
 /// Run a view as a Wayland application.
 pub fn run<V: View>(view: V, config: SurfaceConfig) {

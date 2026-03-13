@@ -109,7 +109,7 @@ Phase 7 (Polish and Optimization) is DONE:
 
 **Plan 4 is now COMPLETE.** All 7 phases implemented.
 
-### Plan 5-svg-rendering: IN PROGRESS
+### Plan 5-svg-rendering: COMPLETE
 Phase 1 (Tier 1 improvements) is DONE:
 - Fixed cache key generation: content hash + dimensions instead of truncated string
 - LRU cache eviction with 64MB byte budget
@@ -169,9 +169,23 @@ Phase 6 (Advanced SVG Features — partial) is DONE:
 - Text rendering from usvg was already done (flattened paths in Phase 3)
 - Remaining: multi-resolution caching/HiDPI, async loading (lower priority)
 
-Remaining phase 7 (SVG DOM — Tier 3) is a large effort for dynamic SVG manipulation.
+Phase 7 (SVG DOM — Tier 3) is DONE:
+- **SvgDocument**: Lightweight document model wrapping usvg tree with flat element list and ID map
+- **SvgElement**: Per-element overrides for fill, stroke, opacity, visibility, transform
+- **SvgElementKind**: Group, Path, Text, Image variants
+- **SvgPaint/SvgStroke**: Simplified paint types for element-level overrides
+- **from_data()**: Parses SVG → usvg tree → walks and builds element list with ID indexing
+- **Query API**: `element_by_id()`, `element_by_id_mut()`, `element_ids()`, `element_count()`
+- **Modification API**: `set_fill()`, `set_stroke()`, `set_opacity()`, `set_visible()`, `set_transform()`, `set_text()`
+- **Dirty flag**: Modifications mark document dirty; `update()` re-records Skia Picture only when needed
+- **Override rendering**: `render_with_overrides()` applies element-level overrides during re-recording
+- **Hit testing**: `hit_test()` and `hit_test_in_bounds()` for bounds-based element detection
+- **ElementKind::SvgDocument**: Arc<Mutex<SvgDocument>> for shared ownership with `svg_document()` builder
+- **DrawCommand::SvgDocument**: Renders via `draw_fit()` with tint and image fit support
+- **SVG event callbacks**: `on_svg_click()` and `on_svg_hover()` builder methods for SVG sub-element events
+- Exported: `SvgDocument`, `SvgElement`, `SvgElementKind`, `SvgPaint`, `SvgStroke` from lib.rs
 
-**Plan 5 Phases 1-6 are DONE** (Tier 1 + path parser + vector renderer + icon system + filters + masks/patterns).
+**Plan 5 is now COMPLETE.** All 7 phases implemented.
 
 ### Plan 6-form-elements: IN PROGRESS
 Phase 1 (focus management additions) is DONE:

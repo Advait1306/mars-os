@@ -232,6 +232,11 @@ impl SkiaRenderer {
                 DrawCommand::BorderImage { bounds, image } => {
                     self.draw_border_image(canvas, bounds, image);
                 }
+                DrawCommand::SvgDocument { document, bounds, tint, image_fit } => {
+                    if let Ok(doc) = document.lock() {
+                        doc.draw_fit(canvas, bounds, tint.as_ref(), *image_fit);
+                    }
+                }
                 DrawCommand::FocusRing { bounds, corner_radii } => {
                     let expanded = Rect {
                         x: bounds.x - 2.0,

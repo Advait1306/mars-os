@@ -70,6 +70,10 @@ pub enum ElementKind {
     Icon {
         name: String,
     },
+    /// Dynamic SVG document with query/modification support.
+    SvgDocument {
+        document: std::sync::Arc<std::sync::Mutex<crate::svg_render::SvgDocument>>,
+    },
 }
 
 /// Data for a vector shape element.
@@ -377,6 +381,10 @@ pub struct Element {
     pub on_touch_end: Option<Box<dyn Fn(&TouchEvent) -> EventResult>>,
     pub on_touch_cancel: Option<Box<dyn Fn(&TouchEvent)>>,
 
+    // SVG element event handlers
+    pub on_svg_click: Option<Box<dyn Fn(&str)>>,
+    pub on_svg_hover: Option<Box<dyn Fn(Option<&str>)>>,
+
     // Legacy handlers (kept for compatibility during migration)
     pub on_hover: Option<Box<dyn Fn(bool)>>,
     pub on_drag: Option<Box<dyn Fn(f32, f32)>>,
@@ -575,6 +583,8 @@ impl Default for Element {
             on_touch_end: None,
             on_touch_cancel: None,
             // Legacy
+            on_svg_click: None,
+            on_svg_hover: None,
             on_hover: None,
             on_drag: None,
             on_scroll: None,
@@ -714,6 +724,19 @@ pub fn icon(name: &str) -> Element {
         },
         width: Some(24.0),
         height: Some(24.0),
+        ..Default::default()
+    }
+}
+
+/// Create an element from a dynamic SVG document.
+pub fn svg_document(doc: crate::svg_render::SvgDocument) -> Element {
+    let (w, h) = doc.intrinsic_size();
+    Element {
+        kind: ElementKind::SvgDocument {
+            document: std::sync::Arc::new(std::sync::Mutex::new(doc)),
+        },
+        width: Some(w),
+        height: Some(h),
         ..Default::default()
     }
 }
@@ -1774,6 +1797,17 @@ impl Element {
     }
 
     // === Legacy event handlers (kept for migration) ===
+
+    /// Set a callback for clicks on SVG sub-elements (receives the element ID).
+    pub fn on_svg_click(mut self, f: impl Fn(&str) + 'static) -> Self {
+        self.on_svg_click = Some(Box::new(f));
+        self
+    }
+    /// Set a callback for hover on SVG sub-elements (receives Some(id) on enter, None on leave).
+    pub fn on_svg_hover(mut self, f: impl Fn(Option<&str>) + 'static) -> Self {
+        self.on_svg_hover = Some(Box::new(f));
+        self
+    }
 
     pub fn on_hover(mut self, f: impl Fn(bool) + 'static) -> Self {
         self.on_hover = Some(Box::new(f));
