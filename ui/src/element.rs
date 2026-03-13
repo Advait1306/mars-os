@@ -20,6 +20,20 @@ pub enum ElementKind {
     Spacer,
     Divider { thickness: f32 },
     TextInput { value: String, placeholder: String },
+    Shape { data: ShapeData },
+}
+
+/// Data for a vector shape element.
+#[derive(Debug, Clone)]
+pub struct ShapeData {
+    /// SVG path `d` attribute string.
+    pub path_data: String,
+    /// Fill color (None = no fill).
+    pub fill: Option<Color>,
+    /// Stroke color and width (None = no stroke).
+    pub stroke: Option<(Color, f32)>,
+    /// ViewBox width/height for scaling the path to element bounds.
+    pub viewbox: Option<(f32, f32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -483,6 +497,36 @@ pub fn spacer() -> Element {
 pub fn divider() -> Element {
     Element {
         kind: ElementKind::Divider { thickness: 1.0 },
+        ..Default::default()
+    }
+}
+
+/// Create a vector shape element from an SVG path `d` attribute string.
+pub fn shape(path_d: &str) -> Element {
+    Element {
+        kind: ElementKind::Shape {
+            data: ShapeData {
+                path_data: path_d.to_string(),
+                fill: Some(crate::color::WHITE),
+                stroke: None,
+                viewbox: None,
+            },
+        },
+        ..Default::default()
+    }
+}
+
+/// Create a shape with an explicit viewbox for scaling.
+pub fn shape_with_viewbox(path_d: &str, vb_w: f32, vb_h: f32) -> Element {
+    Element {
+        kind: ElementKind::Shape {
+            data: ShapeData {
+                path_data: path_d.to_string(),
+                fill: Some(crate::color::WHITE),
+                stroke: None,
+                viewbox: Some((vb_w, vb_h)),
+            },
+        },
         ..Default::default()
     }
 }

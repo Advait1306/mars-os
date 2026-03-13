@@ -1,6 +1,6 @@
 use crate::animator::Animator;
 use crate::color::Color;
-use crate::element::{Element, ElementKind, ImageSource, TextSpan};
+use crate::element::{Element, ElementKind, ImageSource, ShapeData, TextSpan};
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
     BlendMode, Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient,
@@ -63,6 +63,10 @@ pub enum DrawCommand {
         bounds: Rect,
         tint: Option<Color>,
         image_fit: crate::element::ImageFit,
+    },
+    Path {
+        data: ShapeData,
+        bounds: Rect,
     },
     GradientRect {
         bounds: Rect,
@@ -410,6 +414,14 @@ fn emit_commands(
             bounds: bounds.clone(),
             tint: element.tint,
             image_fit: element.image_fit,
+        });
+    }
+
+    // Shape (vector path)
+    if let ElementKind::Shape { ref data } = element.kind {
+        commands.push(DrawCommand::Path {
+            data: data.clone(),
+            bounds: bounds.clone(),
         });
     }
 

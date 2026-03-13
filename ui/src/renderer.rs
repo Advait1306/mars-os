@@ -60,6 +60,9 @@ impl SkiaRenderer {
                         *text_decoration_style, text_decoration_color.as_ref(),
                         text_shadow, *cursor_byte_offset, *selection_byte_range, *scroll_offset);
                 }
+                DrawCommand::Path { data, bounds } => {
+                    self.draw_path(canvas, data, bounds);
+                }
                 DrawCommand::Image { source, bounds, tint, image_fit } => {
                     self.draw_image(canvas, source, bounds, tint.as_ref(), *image_fit);
                 }
@@ -325,6 +328,44 @@ impl SkiaRenderer {
         paint.set_color(to_skia_color(&outline.color));
         apply_border_style_to_paint(&mut paint, outline.style, outline.width);
         canvas.draw_rrect(rrect, &paint);
+    }
+
+    fn draw_path(
+        &self,
+        canvas: &Canvas,
+        data: &crate::element::ShapeData,
+        bounds: &Rect,
+    ) {
+        if let Some(mut path) = parse_svg_path(&data.path_data) {
+            // Scale path from viewbox to element bounds
+            let path_bounds = path.bounds();
+            let (vb_w, vb_h) = data.viewbox.unwrap_or((path_bounds.width(), path_bounds.height()));
+            if vb_w > 0.0 && vb_h > 0.0 {
+                let sx = bounds.width / vb_w;
+                let sy = bounds.height / vb_h;
+                let mut matrix = skia_safe::Matrix::new_identity();
+                matrix.set_scale_translate((sx, sy), (bounds.x, bounds.y));
+                path.transform(&matrix);
+            }
+
+            // Fill
+            if let Some(fill) = &data.fill {
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_color(to_skia_color(fill));
+                canvas.draw_path(&path, &paint);
+            }
+
+            // Stroke
+            if let Some((color, width)) = &data.stroke {
+                let mut paint = Paint::default();
+                paint.set_anti_alias(true);
+                paint.set_style(PaintStyle::Stroke);
+                paint.set_stroke_width(*width);
+                paint.set_color(to_skia_color(color));
+                canvas.draw_path(&path, &paint);
+            }
+        }
     }
 
     fn draw_gradient_rect(
@@ -1239,6 +1280,225 @@ fn to_rrect(bounds: &Rect, radii: &crate::style::CornerRadii) -> RRect {
             skia_safe::Point::new(radii.bottom_left, radii.bottom_left),
         ];
         RRect::new_rect_radii(rect, &corner_radii)
+    }
+}
+
+/// Parse an SVG path `d` attribute string into a Skia Path.
+fn parse_svg_path(d: &str) -> Option<skia_safe::Path> {
+    let mut path = skia_safe::Path::new();
+    let mut chars = d.chars().peekable();
+    let mut current_x = 0.0f32;
+    let mut current_y = 0.0f32;
+    let mut last_cmd = ' ';
+
+    fn skip_ws_comma(chars: &mut std::iter::Peekable<std::str::Chars>) {
+        while let Some(&c) = chars.peek() {
+            if c == ' ' || c == ',' || c == '\t' || c == '\n' || c == '\r' {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<f32> {
+        skip_ws_comma(chars);
+        let mut s = String::new();
+        // Handle sign
+        if let Some(&c) = chars.peek() {
+            if c == '-' || c == '+' {
+                s.push(c);
+                chars.next();
+            }
+        }
+        let mut has_dot = false;
+        let mut has_e = false;
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                s.push(c);
+                chars.next();
+            } else if c == '.' && !has_dot && !has_e {
+                has_dot = true;
+                s.push(c);
+                chars.next();
+            } else if (c == 'e' || c == 'E') && !has_e {
+                has_e = true;
+                s.push(c);
+                chars.next();
+                if let Some(&c2) = chars.peek() {
+                    if c2 == '-' || c2 == '+' {
+                        s.push(c2);
+                        chars.next();
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        if s.is_empty() || s == "-" || s == "+" {
+            None
+        } else {
+            s.parse().ok()
+        }
+    }
+
+    while chars.peek().is_some() {
+        skip_ws_comma(&mut chars);
+        let cmd = if let Some(&c) = chars.peek() {
+            if c.is_ascii_alphabetic() {
+                chars.next();
+                c
+            } else {
+                // Implicit repeat of last command
+                last_cmd
+            }
+        } else {
+            break;
+        };
+
+        match cmd {
+            'M' => {
+                if let (Some(x), Some(y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                    path.move_to((x, y));
+                    current_x = x;
+                    current_y = y;
+                    // Subsequent coords are implicit LineTo
+                    while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                        if let (Some(x), Some(y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                            path.line_to((x, y));
+                            current_x = x;
+                            current_y = y;
+                        }
+                    }
+                }
+            }
+            'm' => {
+                if let (Some(dx), Some(dy)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                    current_x += dx;
+                    current_y += dy;
+                    path.move_to((current_x, current_y));
+                    while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                        if let (Some(dx), Some(dy)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                            current_x += dx;
+                            current_y += dy;
+                            path.line_to((current_x, current_y));
+                        }
+                    }
+                }
+            }
+            'L' => {
+                while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                    if let (Some(x), Some(y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                        path.line_to((x, y));
+                        current_x = x;
+                        current_y = y;
+                    }
+                }
+            }
+            'l' => {
+                while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                    if let (Some(dx), Some(dy)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                        current_x += dx;
+                        current_y += dy;
+                        path.line_to((current_x, current_y));
+                    }
+                }
+            }
+            'H' => {
+                if let Some(x) = parse_number(&mut chars) {
+                    current_x = x;
+                    path.line_to((current_x, current_y));
+                }
+            }
+            'h' => {
+                if let Some(dx) = parse_number(&mut chars) {
+                    current_x += dx;
+                    path.line_to((current_x, current_y));
+                }
+            }
+            'V' => {
+                if let Some(y) = parse_number(&mut chars) {
+                    current_y = y;
+                    path.line_to((current_x, current_y));
+                }
+            }
+            'v' => {
+                if let Some(dy) = parse_number(&mut chars) {
+                    current_y += dy;
+                    path.line_to((current_x, current_y));
+                }
+            }
+            'C' => {
+                while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                    if let (Some(x1), Some(y1), Some(x2), Some(y2), Some(x), Some(y)) = (
+                        parse_number(&mut chars), parse_number(&mut chars),
+                        parse_number(&mut chars), parse_number(&mut chars),
+                        parse_number(&mut chars), parse_number(&mut chars),
+                    ) {
+                        path.cubic_to((x1, y1), (x2, y2), (x, y));
+                        current_x = x;
+                        current_y = y;
+                    }
+                }
+            }
+            'c' => {
+                while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                    if let (Some(dx1), Some(dy1), Some(dx2), Some(dy2), Some(dx), Some(dy)) = (
+                        parse_number(&mut chars), parse_number(&mut chars),
+                        parse_number(&mut chars), parse_number(&mut chars),
+                        parse_number(&mut chars), parse_number(&mut chars),
+                    ) {
+                        path.cubic_to(
+                            (current_x + dx1, current_y + dy1),
+                            (current_x + dx2, current_y + dy2),
+                            (current_x + dx, current_y + dy),
+                        );
+                        current_x += dx;
+                        current_y += dy;
+                    }
+                }
+            }
+            'Q' => {
+                while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                    if let (Some(cx), Some(cy), Some(x), Some(y)) = (
+                        parse_number(&mut chars), parse_number(&mut chars),
+                        parse_number(&mut chars), parse_number(&mut chars),
+                    ) {
+                        path.quad_to((cx, cy), (x, y));
+                        current_x = x;
+                        current_y = y;
+                    }
+                }
+            }
+            'q' => {
+                while { skip_ws_comma(&mut chars); chars.peek().map_or(false, |c| c.is_ascii_digit() || *c == '-' || *c == '+' || *c == '.') } {
+                    if let (Some(dcx), Some(dcy), Some(dx), Some(dy)) = (
+                        parse_number(&mut chars), parse_number(&mut chars),
+                        parse_number(&mut chars), parse_number(&mut chars),
+                    ) {
+                        path.quad_to(
+                            (current_x + dcx, current_y + dcy),
+                            (current_x + dx, current_y + dy),
+                        );
+                        current_x += dx;
+                        current_y += dy;
+                    }
+                }
+            }
+            'Z' | 'z' => {
+                path.close();
+            }
+            _ => {
+                // Skip unknown commands
+            }
+        }
+        last_cmd = cmd;
+    }
+
+    if path.count_points() > 0 {
+        Some(path)
+    } else {
+        None
     }
 }
 

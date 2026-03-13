@@ -58,7 +58,17 @@ Phase 1 (Tier 1 improvements) is DONE:
 - ImageFit enum (Contain, Cover, Fill, ScaleDown) with `image_fit()` builder
 - Proper image fit computation for all modes
 
-Next phase: **Phase 2** (SVG path parser and vector shapes).
+Phase 2 (SVG path parser) is DONE:
+- SVG path `d` attribute parser supporting M/m, L/l, H/h, V/v, C/c, Q/q, Z/z commands
+- ElementKind::Shape with ShapeData (path_data, fill, stroke, viewbox)
+- DrawCommand::Path variant with viewbox-to-bounds scaling
+- shape() and shape_with_viewbox() builder functions
+- Path rendering with fill and stroke in SkiaRenderer
+
+Remaining phases (3-7: vector SVG renderer, icon system, SVG filters, advanced, SVG DOM) are
+advanced features that can be implemented incrementally as needed. The core SVG improvements are done.
+
+**Plan 5 is DONE** (Tier 1 improvements + path parser). Next plan: **6-form-elements**.
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE
