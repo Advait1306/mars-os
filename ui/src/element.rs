@@ -109,6 +109,8 @@ pub enum ScrollDirection {
 pub enum ImageSource {
     Svg(String),
     File(String),
+    /// Vector SVG: resolution-independent rendering via Skia paths instead of rasterization.
+    VectorSvg(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -629,6 +631,27 @@ pub fn image_file(path: &str) -> Element {
     Element {
         kind: ElementKind::Image {
             source: ImageSource::File(path.to_string()),
+        },
+        ..Default::default()
+    }
+}
+
+/// Create an image element using vector SVG rendering (resolution-independent).
+/// The SVG is rendered via native Skia path calls instead of rasterization.
+pub fn vector_svg(svg: &str) -> Element {
+    Element {
+        kind: ElementKind::Image {
+            source: ImageSource::VectorSvg(svg.to_string()),
+        },
+        ..Default::default()
+    }
+}
+
+/// Create an image element from an SVG file using vector rendering.
+pub fn vector_svg_file(path: &str) -> Element {
+    Element {
+        kind: ElementKind::Image {
+            source: ImageSource::VectorSvg(format!("file:{}", path)),
         },
         ..Default::default()
     }

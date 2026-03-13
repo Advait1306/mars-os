@@ -73,10 +73,21 @@ Phase 2 (SVG path parser) is DONE:
 - shape() and shape_with_viewbox() builder functions
 - Path rendering with fill and stroke in SkiaRenderer
 
-Remaining phases (3-7: vector SVG renderer, icon system, SVG filters, advanced, SVG DOM) are
-advanced features that can be implemented incrementally as needed. The core SVG improvements are done.
+Phase 3 (Tier 2 Vector SVG Renderer) is DONE:
+- `svg_render.rs` module: usvg tree walker emitting native Skia draw calls
+- `VectorSvg` struct: parses SVG → usvg tree → records Skia Picture for resolution-independent replay
+- Full usvg node support: Group (transform, opacity, clip-path), Path (fill, stroke, dash, cap, join), Image (PNG/JPEG/GIF/WEBP/nested SVG), Text (via flattened paths)
+- SVG paint conversion: solid colors, linear gradients, radial gradients (pattern fallback to gray)
+- Clip path support with per-path fill rules
+- `ImageSource::VectorSvg` variant with content hash cache in SkiaRenderer
+- `vector_svg()` and `vector_svg_file()` builder functions
+- Image fit support (Contain, Cover, Fill, ScaleDown) for vector SVGs
+- Tint support via SrcIn blend on layer
 
-**Plan 5 is DONE** (Tier 1 improvements + path parser).
+Remaining phases (4-7: icon system, SVG filters, advanced features, SVG DOM) are
+advanced features that can be implemented incrementally as needed.
+
+**Plan 5 Phases 1-3 are DONE** (Tier 1 + path parser + vector renderer).
 
 ### Plan 6-form-elements: IN PROGRESS
 Phase 1 (focus management additions) is DONE:

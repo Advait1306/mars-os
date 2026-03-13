@@ -17,6 +17,7 @@ pub mod scroll;
 pub mod select_state;
 pub mod text_input_state;
 pub mod textarea_state;
+pub mod svg_render;
 pub mod theme;
 pub mod wayland;
 

@@ -22,6 +22,7 @@ pub struct SkiaRenderer {
     image_cache: HashMap<u64, CacheEntry>,
     cache_total_bytes: usize,
     cache_max_bytes: usize,
+    vector_svg_cache: HashMap<u64, crate::svg_render::VectorSvg>,
 }
 
 impl SkiaRenderer {
@@ -33,6 +34,7 @@ impl SkiaRenderer {
             image_cache: HashMap::new(),
             cache_total_bytes: 0,
             cache_max_bytes: 64 * 1024 * 1024, // 64 MB
+            vector_svg_cache: HashMap::new(),
         }
     }
 
@@ -887,12 +889,39 @@ impl SkiaRenderer {
         let tw = bounds.width as u32;
         let th = bounds.height as u32;
 
+        // Handle vector SVG separately — resolution-independent, no rasterization
+        if let ImageSource::VectorSvg(data) = source {
+            let mut hasher = DefaultHasher::new();
+            2u8.hash(&mut hasher);
+            data.hash(&mut hasher);
+            let key = hasher.finish();
+
+            if !self.vector_svg_cache.contains_key(&key) {
+                let svg_data = if let Some(path) = data.strip_prefix("file:") {
+                    std::fs::read(path).ok()
+                } else {
+                    Some(data.as_bytes().to_vec())
+                };
+                if let Some(bytes) = svg_data {
+                    if let Some(vector) = crate::svg_render::VectorSvg::from_data(&bytes) {
+                        self.vector_svg_cache.insert(key, vector);
+                    }
+                }
+            }
+
+            if let Some(vector) = self.vector_svg_cache.get(&key) {
+                vector.draw_fit(canvas, bounds, tint, image_fit);
+            }
+            return;
+        }
+
         // Hash-based cache key including dimensions
         let cache_key = {
             let mut hasher = DefaultHasher::new();
             match source {
                 ImageSource::Svg(s) => { 0u8.hash(&mut hasher); s.hash(&mut hasher); }
                 ImageSource::File(p) => { 1u8.hash(&mut hasher); p.hash(&mut hasher); }
+                ImageSource::VectorSvg(_) => unreachable!(),
             }
             tw.hash(&mut hasher);
             th.hash(&mut hasher);
