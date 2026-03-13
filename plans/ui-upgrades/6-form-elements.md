@@ -2338,23 +2338,30 @@ Files changed:
 - `ui/src/display_list.rs` -- select/dropdown rendering
 - New: `ui/src/select_state.rs` -- select state management
 
-### Phase 8: Textarea
+### Phase 8: Textarea — DONE
 
 **Depends on Phase 2 (text input) for shared editing logic.**
 
-1. Textarea element with multiline text.
-2. Line wrapping (soft/hard/off).
-3. Vertical scrolling with scrollbar.
-4. Line numbers.
-5. Tab handling (indent/dedent).
-6. Multiline cursor movement (up/down/page).
-7. Auto-resize mode.
+1. ✅ Textarea element with multiline text (`ElementKind::Textarea`).
+2. ✅ Line wrapping (soft/off via `TextWrap` enum).
+3. ✅ Vertical + horizontal scrolling via `scroll_offset_y`/`scroll_offset_x`.
+4. ✅ Line numbers (`show_line_numbers` flag, rendered with separator).
+5. ✅ Tab handling (indent via `insert_tab` with configurable `tab_size`).
+6. ✅ Multiline cursor movement (up/down/page/home/end with desired_column).
+7. ✅ Auto-resize mode (`auto_resize` flag).
+8. ✅ Selection across lines, undo/redo, backspace joining lines.
+9. ✅ 18 unit tests covering state, cursor movement, selection, unicode.
+
+**Remaining (deferred):** Hard wrap mode, scrollbar thumb rendering, resize drag handles.
 
 Files changed:
-- `ui/src/element.rs` -- `Textarea` kind
-- New: `ui/src/textarea_state.rs` -- textarea state management
-- `ui/src/display_list.rs` -- textarea rendering
-- `ui/src/renderer.rs` -- scrollbar rendering
+- `ui/src/element.rs` -- `Textarea` kind, `TextWrap`, `TextareaResize` enums, builder + chainable methods
+- New: `ui/src/textarea_state.rs` -- textarea state management with full test suite
+- `ui/src/display_list.rs` -- `DrawCommand::MultilineText` + textarea display list generation
+- `ui/src/renderer.rs` -- `draw_multiline_text` + `measure_char_range_in_line` methods
+- `ui/src/event_dispatch.rs` -- Textarea recognized as text input for focus/tab/paste
+- `ui/src/layout.rs` -- Textarea leaf node with text measurement
+- `ui/src/lib.rs` -- `textarea_state` module export
 
 ### Phase 9: IME Support
 

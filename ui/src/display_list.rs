@@ -162,6 +162,26 @@ pub enum DrawCommand {
         word_spacing: f32,
         text_shadow: Vec<(Color, (f32, f32), f64)>,
     },
+    /// Multiline text area with cursor, selection, and scrolling.
+    MultilineText {
+        text: String,
+        bounds: Rect,
+        font_size: f32,
+        color: Color,
+        font_family: Option<Vec<String>>,
+        font_weight: Option<i32>,
+        font_italic: bool,
+        line_height: Option<f32>,
+        letter_spacing: f32,
+        word_spacing: f32,
+        /// Cursor position as (line, column). None if not focused.
+        cursor_pos: Option<(usize, usize)>,
+        /// Selection as ((start_line, start_col), (end_line, end_col)). None if no selection.
+        selection_range: Option<((usize, usize), (usize, usize))>,
+        scroll_offset_y: f32,
+        scroll_offset_x: f32,
+        show_line_numbers: bool,
+    },
 }
 
 /// Walk the LayoutNode tree and the corresponding Element tree to emit draw commands.
@@ -513,6 +533,76 @@ fn emit_commands(
             cursor_byte_offset,
             selection_byte_range,
             scroll_offset: element.scroll_offset,
+        });
+    }
+
+    // Textarea
+    if let ElementKind::Textarea { ref value, ref placeholder } = element.kind {
+        let display_text = if value.is_empty() { placeholder } else { value };
+        let text_color = if value.is_empty() {
+            let base = element.color.unwrap_or(crate::color::WHITE);
+            Color {
+                r: base.r,
+                g: base.g,
+                b: base.b,
+                a: (base.a as f32 * 0.4) as u8,
+            }
+        } else {
+            element.color.unwrap_or(crate::color::WHITE)
+        };
+
+        // Background
+        commands.push(DrawCommand::Rect {
+            bounds: bounds.clone(),
+            background: element.background.unwrap_or(Color { r: 30, g: 30, b: 34, a: 255 }),
+            corner_radii: element.corner_radii,
+            border: element.border.clone(),
+            border_style: element.border_style,
+        });
+
+        // cursor_pos and selection come from element properties set by the view
+        let cursor_pos = element.cursor_offset.map(|_| {
+            // The view sets scroll_offset_y/x on the element; cursor pos as (line, col)
+            // is encoded via cursor_offset (flat char position) and decoded here
+            let text = if value.is_empty() { "" } else { value.as_str() };
+            if let Some(char_idx) = element.cursor_offset {
+                crate::textarea_state::TextareaState::byte_offset_to_pos(
+                    text,
+                    crate::text_input_state::char_to_byte_pos(text, char_idx),
+                )
+            } else {
+                (0, 0)
+            }
+        });
+
+        let selection_range = if !value.is_empty() {
+            element.selection_range.map(|(start_char, end_char)| {
+                let start_byte = crate::text_input_state::char_to_byte_pos(value, start_char);
+                let end_byte = crate::text_input_state::char_to_byte_pos(value, end_char);
+                let start_pos = crate::textarea_state::TextareaState::byte_offset_to_pos(value, start_byte);
+                let end_pos = crate::textarea_state::TextareaState::byte_offset_to_pos(value, end_byte);
+                (start_pos, end_pos)
+            })
+        } else {
+            None
+        };
+
+        commands.push(DrawCommand::MultilineText {
+            text: display_text.clone(),
+            bounds: bounds.clone(),
+            font_size: element.font_size,
+            color: text_color,
+            font_family: element.font_family.clone(),
+            font_weight: element.font_weight,
+            font_italic: element.font_italic,
+            line_height: element.line_height,
+            letter_spacing: element.letter_spacing,
+            word_spacing: element.word_spacing,
+            cursor_pos,
+            selection_range,
+            scroll_offset_y: element.scroll_offset_y,
+            scroll_offset_x: element.scroll_offset_x,
+            show_line_numbers: element.show_line_numbers,
         });
     }
 

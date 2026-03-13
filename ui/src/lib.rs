@@ -15,6 +15,7 @@ pub mod animation;
 pub mod animator;
 pub mod scroll;
 pub mod text_input_state;
+pub mod textarea_state;
 pub mod wayland;
 
 pub use color::*;

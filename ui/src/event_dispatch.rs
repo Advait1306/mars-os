@@ -144,7 +144,7 @@ impl EventState {
     pub fn focused_element_is_text_input(&self, root_element: &Element) -> bool {
         if let Some(idx) = self.focused {
             if let Some(element) = get_element_by_preorder(root_element, idx) {
-                return matches!(element.kind, crate::element::ElementKind::TextInput { .. });
+                return matches!(element.kind, crate::element::ElementKind::TextInput { .. } | crate::element::ElementKind::Textarea { .. });
             }
         }
         false
@@ -1257,7 +1257,7 @@ impl EventState {
             if let Some(text) = event.clipboard_data.get_text() {
                 if !text.is_empty() {
                     if let Some(element) = get_element_by_preorder(root_element, focused_idx) {
-                        if matches!(element.kind, crate::element::ElementKind::TextInput { .. }) {
+                        if matches!(element.kind, crate::element::ElementKind::TextInput { .. } | crate::element::ElementKind::Textarea { .. }) {
                             // Fire through text input pipeline
                             let before_input = BeforeInputEvent {
                                 data: Some(text.to_string()),
@@ -2087,8 +2087,8 @@ fn element_is_focusable(element: &Element) -> bool {
     if let Some(focusable) = element.focusable {
         return focusable;
     }
-    // Default: text inputs and elements with click handlers are focusable
-    matches!(element.kind, crate::element::ElementKind::TextInput { .. })
+    // Default: text inputs, textareas, and elements with click handlers are focusable
+    matches!(element.kind, crate::element::ElementKind::TextInput { .. } | crate::element::ElementKind::Textarea { .. })
         || element.on_click.is_some()
 }
 
@@ -2211,8 +2211,8 @@ fn element_is_tabbable(element: &Element) -> bool {
         // focusable=true + tab_index == None means focusable but not tabbable
         return element.tab_index.is_some();
     }
-    // Default tabbable: text inputs and elements with on_click
-    matches!(element.kind, crate::element::ElementKind::TextInput { .. })
+    // Default tabbable: text inputs, textareas, and elements with on_click
+    matches!(element.kind, crate::element::ElementKind::TextInput { .. } | crate::element::ElementKind::Textarea { .. })
         || element.on_click.is_some()
 }
 

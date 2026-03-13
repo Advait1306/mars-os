@@ -57,6 +57,10 @@ pub enum ElementKind {
         value: Option<f64>,
         variant: ProgressVariant,
     },
+    Textarea {
+        value: String,
+        placeholder: String,
+    },
 }
 
 /// Data for a vector shape element.
@@ -121,6 +125,24 @@ pub enum ButtonVariant {
 pub enum ProgressVariant {
     Bar,
     Circular,
+}
+
+/// Text wrapping mode for textarea.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextWrap {
+    /// Visual wrapping only, no newlines inserted.
+    Soft,
+    /// No wrapping, horizontal scroll.
+    Off,
+}
+
+/// Resize behavior for textarea.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextareaResize {
+    None,
+    Vertical,
+    Horizontal,
+    Both,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -327,6 +349,15 @@ pub struct Element {
     pub progress_color: Option<Color>,
     pub track_color: Option<Color>,
 
+    // Textarea properties
+    pub text_wrap: TextWrap,
+    pub textarea_resize: TextareaResize,
+    pub show_line_numbers: bool,
+    pub tab_size: u32,
+    pub auto_resize: bool,
+    pub scroll_offset_y: f32,
+    pub scroll_offset_x: f32,
+
     // Hit testing
     pub pointer_events: PointerEvents,
 }
@@ -494,6 +525,14 @@ impl Default for Element {
             show_value: false,
             progress_color: None,
             track_color: None,
+            // Textarea
+            text_wrap: TextWrap::Soft,
+            textarea_resize: TextareaResize::None,
+            show_line_numbers: false,
+            tab_size: 4,
+            auto_resize: false,
+            scroll_offset_y: 0.0,
+            scroll_offset_x: 0.0,
             // Hit testing
             pointer_events: PointerEvents::Auto,
         }
@@ -775,6 +814,19 @@ pub fn spinner() -> Element {
         },
         width: Some(Dim::Px(24.0)),
         height: Some(Dim::Px(24.0)),
+        ..Default::default()
+    }
+}
+
+pub fn textarea(value: &str) -> Element {
+    Element {
+        kind: ElementKind::Textarea {
+            value: value.to_string(),
+            placeholder: String::new(),
+        },
+        cursor: Some(CursorStyle::Text),
+        width: Some(Dim::Px(300.0)),
+        height: Some(Dim::Px(120.0)),
         ..Default::default()
     }
 }
@@ -1646,6 +1698,36 @@ impl Element {
     }
     pub fn loading(mut self, on: bool) -> Self {
         self.loading = on;
+        self
+    }
+
+    // === Textarea properties ===
+
+    pub fn text_wrap(mut self, w: TextWrap) -> Self {
+        self.text_wrap = w;
+        self
+    }
+    pub fn textarea_resize(mut self, r: TextareaResize) -> Self {
+        self.textarea_resize = r;
+        self
+    }
+    pub fn line_numbers(mut self, on: bool) -> Self {
+        self.show_line_numbers = on;
+        self
+    }
+    pub fn tab_size(mut self, n: u32) -> Self {
+        self.tab_size = n;
+        self
+    }
+    pub fn auto_resize(mut self, on: bool) -> Self {
+        self.auto_resize = on;
+        self
+    }
+    /// Set textarea rows (sets height based on line height).
+    pub fn rows(mut self, r: u32) -> Self {
+        let line_h = self.line_height.unwrap_or(1.4) * self.font_size;
+        let padding_v = self.padding[0] + self.padding[2];
+        self.height = Some(Dim::Px(r as f32 * line_h + padding_v + 16.0)); // 16 = default padding if none set
         self
     }
 

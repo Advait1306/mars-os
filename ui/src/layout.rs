@@ -152,6 +152,11 @@ fn build_taffy_node(
             tree.new_leaf_with_context(style, make_ctx(display_text, element))
                 .unwrap()
         }
+        ElementKind::Textarea { value, placeholder } => {
+            let display_text = if value.is_empty() { placeholder.clone() } else { value.clone() };
+            tree.new_leaf_with_context(style, make_ctx(display_text, element))
+                .unwrap()
+        }
         _ => {
             tree.new_with_children(style, &child_ids).unwrap()
         }

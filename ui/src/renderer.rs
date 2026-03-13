@@ -210,6 +210,17 @@ impl SkiaRenderer {
                         *text_align, *max_lines, *text_overflow_ellipsis, *letter_spacing,
                         *word_spacing, text_shadow);
                 }
+                DrawCommand::MultilineText { text, bounds, font_size, color,
+                    font_family, font_weight, font_italic, line_height,
+                    letter_spacing, word_spacing,
+                    cursor_pos, selection_range, scroll_offset_y, scroll_offset_x,
+                    show_line_numbers } => {
+                    self.draw_multiline_text(canvas, text, bounds, *font_size, color,
+                        font_family.as_deref(), *font_weight, *font_italic, *line_height,
+                        *letter_spacing, *word_spacing,
+                        *cursor_pos, *selection_range,
+                        *scroll_offset_y, *scroll_offset_x, *show_line_numbers);
+                }
             }
         }
     }
@@ -1011,6 +1022,266 @@ impl SkiaRenderer {
             canvas.restore();
             canvas.restore();
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_multiline_text(
+        &mut self,
+        canvas: &Canvas,
+        text: &str,
+        bounds: &Rect,
+        font_size: f32,
+        color: &Color,
+        font_family: Option<&[String]>,
+        font_weight: Option<i32>,
+        font_italic: bool,
+        line_height: Option<f32>,
+        letter_spacing: f32,
+        word_spacing: f32,
+        cursor_pos: Option<(usize, usize)>,
+        selection_range: Option<((usize, usize), (usize, usize))>,
+        scroll_offset_y: f32,
+        scroll_offset_x: f32,
+        show_line_numbers: bool,
+    ) {
+        use skia_safe::font_style::{Weight, Width, Slant};
+
+        let padding = 8.0;
+        let line_num_width = if show_line_numbers {
+            let num_lines = text.split('\n').count();
+            let digits = format!("{}", num_lines).len() as f32;
+            digits * font_size * 0.6 + 16.0
+        } else {
+            0.0
+        };
+
+        // Clip to bounds
+        canvas.save();
+        canvas.clip_rect(
+            skia_safe::Rect::from_xywh(bounds.x, bounds.y, bounds.width, bounds.height),
+            ClipOp::Intersect,
+            true,
+        );
+
+        // Compute line height in pixels
+        let lh = line_height.unwrap_or(1.4) * font_size;
+        let lines: Vec<&str> = text.split('\n').collect();
+
+        // Calculate visible range
+        let first_visible = (scroll_offset_y / lh).floor() as usize;
+        let visible_count = (bounds.height / lh).ceil() as usize + 2;
+        let last_visible = (first_visible + visible_count).min(lines.len());
+
+        let content_x = bounds.x + padding + line_num_width - scroll_offset_x;
+        let content_y = bounds.y + padding - scroll_offset_y;
+        let text_area_width = bounds.width - padding * 2.0 - line_num_width;
+
+        // Draw line numbers
+        if show_line_numbers {
+            let mut num_paint = Paint::default();
+            num_paint.set_anti_alias(true);
+            let dim_color = Color { r: color.r, g: color.g, b: color.b, a: (color.a as f32 * 0.4) as u8 };
+
+            for i in first_visible..last_visible {
+                let y = content_y + i as f32 * lh;
+                if y + lh < bounds.y || y > bounds.y + bounds.height {
+                    continue;
+                }
+                let num_str = format!("{}", i + 1);
+                let mut para_style = ParagraphStyle::new();
+                para_style.set_text_align(SkTextAlign::Right);
+                let mut ts = TextStyle::new();
+                ts.set_font_size(font_size);
+                ts.set_color(to_skia_color(&dim_color));
+                if let Some(families) = font_family {
+                    ts.set_font_families(families);
+                }
+                let weight = font_weight.map(|w| Weight::from(w)).unwrap_or(Weight::NORMAL);
+                let slant = if font_italic { Slant::Italic } else { Slant::Upright };
+                ts.set_font_style(FontStyle::new(weight, Width::NORMAL, slant));
+                para_style.set_text_style(&ts);
+                let mut builder = ParagraphBuilder::new(&para_style, self.font_collection.clone());
+                builder.push_style(&ts);
+                builder.add_text(&num_str);
+                let mut para = builder.build();
+                para.layout(line_num_width - 8.0);
+                para.paint(canvas, (bounds.x + padding, y));
+            }
+
+            // Draw separator line
+            let mut sep_paint = Paint::default();
+            sep_paint.set_color(skia_safe::Color::from_argb(40, color.r, color.g, color.b));
+            sep_paint.set_stroke_width(1.0);
+            let sep_x = bounds.x + padding + line_num_width - 4.0;
+            canvas.draw_line(
+                (sep_x, bounds.y),
+                (sep_x, bounds.y + bounds.height),
+                &sep_paint,
+            );
+        }
+
+        // Draw selection highlight
+        if let Some((start, end)) = selection_range {
+            let mut sel_paint = Paint::default();
+            sel_paint.set_color(skia_safe::Color::from_argb(80, 100, 150, 255));
+            sel_paint.set_anti_alias(true);
+
+            for line_idx in start.0..=end.0 {
+                if line_idx < first_visible || line_idx >= last_visible {
+                    continue;
+                }
+                let line_text = lines.get(line_idx).unwrap_or(&"");
+                let line_chars = line_text.chars().count();
+                let sel_start_col = if line_idx == start.0 { start.1 } else { 0 };
+                let sel_end_col = if line_idx == end.0 { end.1 } else { line_chars };
+
+                if sel_start_col == sel_end_col {
+                    continue;
+                }
+
+                // Build a paragraph for this line to measure character positions
+                let (x_start, x_end) = self.measure_char_range_in_line(
+                    line_text, sel_start_col, sel_end_col,
+                    font_size, font_family, font_weight, font_italic,
+                    letter_spacing, word_spacing, text_area_width,
+                );
+
+                let y = content_y + line_idx as f32 * lh;
+                canvas.draw_rect(
+                    skia_safe::Rect::from_xywh(content_x + x_start, y, x_end - x_start, lh),
+                    &sel_paint,
+                );
+            }
+        }
+
+        // Draw text lines
+        for i in first_visible..last_visible {
+            let y = content_y + i as f32 * lh;
+            if y + lh < bounds.y || y > bounds.y + bounds.height {
+                continue;
+            }
+            let line_text = lines.get(i).unwrap_or(&"");
+            if line_text.is_empty() {
+                continue;
+            }
+
+            let mut para_style = ParagraphStyle::new();
+            para_style.set_max_lines(1);
+
+            let mut ts = TextStyle::new();
+            ts.set_font_size(font_size);
+            ts.set_color(to_skia_color(color));
+            if let Some(families) = font_family {
+                ts.set_font_families(families);
+            }
+            let weight = font_weight.map(|w| Weight::from(w)).unwrap_or(Weight::NORMAL);
+            let slant = if font_italic { Slant::Italic } else { Slant::Upright };
+            ts.set_font_style(FontStyle::new(weight, Width::NORMAL, slant));
+            if let Some(lh_val) = line_height {
+                ts.set_height(lh_val);
+                ts.set_height_override(true);
+            }
+            if letter_spacing != 0.0 {
+                ts.set_letter_spacing(letter_spacing);
+            }
+            if word_spacing != 0.0 {
+                ts.set_word_spacing(word_spacing);
+            }
+            para_style.set_text_style(&ts);
+
+            let mut builder = ParagraphBuilder::new(&para_style, self.font_collection.clone());
+            builder.push_style(&ts);
+            builder.add_text(line_text);
+            let mut para = builder.build();
+            para.layout(text_area_width);
+            para.paint(canvas, (content_x, y));
+        }
+
+        // Draw cursor
+        if let Some((cline, ccol)) = cursor_pos {
+            let y = content_y + cline as f32 * lh;
+            let line_text = lines.get(cline).unwrap_or(&"");
+            let cursor_x = if ccol == 0 || line_text.is_empty() {
+                0.0
+            } else {
+                let (_, x) = self.measure_char_range_in_line(
+                    line_text, 0, ccol.min(line_text.chars().count()),
+                    font_size, font_family, font_weight, font_italic,
+                    letter_spacing, word_spacing, text_area_width,
+                );
+                x
+            };
+
+            let mut cursor_paint = Paint::default();
+            cursor_paint.set_color(to_skia_color(color));
+            cursor_paint.set_anti_alias(true);
+            canvas.draw_rect(
+                skia_safe::Rect::from_xywh(content_x + cursor_x, y, 1.5, lh),
+                &cursor_paint,
+            );
+        }
+
+        canvas.restore();
+    }
+
+    /// Measure the x-range of characters [start_col..end_col] in a line of text.
+    /// Returns (x_start, x_end) in pixels relative to line start.
+    fn measure_char_range_in_line(
+        &mut self,
+        line_text: &str,
+        start_col: usize,
+        end_col: usize,
+        font_size: f32,
+        font_family: Option<&[String]>,
+        font_weight: Option<i32>,
+        font_italic: bool,
+        letter_spacing: f32,
+        word_spacing: f32,
+        max_width: f32,
+    ) -> (f32, f32) {
+        use skia_safe::font_style::{Weight, Width, Slant};
+        use skia_safe::textlayout::RectHeightStyle;
+        use skia_safe::textlayout::RectWidthStyle;
+
+        let mut para_style = ParagraphStyle::new();
+        para_style.set_max_lines(1);
+        let mut ts = TextStyle::new();
+        ts.set_font_size(font_size);
+        if let Some(families) = font_family {
+            ts.set_font_families(families);
+        }
+        let weight = font_weight.map(|w| Weight::from(w)).unwrap_or(Weight::NORMAL);
+        let slant = if font_italic { Slant::Italic } else { Slant::Upright };
+        ts.set_font_style(FontStyle::new(weight, Width::NORMAL, slant));
+        if letter_spacing != 0.0 { ts.set_letter_spacing(letter_spacing); }
+        if word_spacing != 0.0 { ts.set_word_spacing(word_spacing); }
+        para_style.set_text_style(&ts);
+
+        let mut builder = ParagraphBuilder::new(&para_style, self.font_collection.clone());
+        builder.push_style(&ts);
+        builder.add_text(line_text);
+        let mut para = builder.build();
+        para.layout(max_width);
+
+        // Convert char columns to byte offsets
+        let start_byte = line_text.char_indices().nth(start_col).map(|(i, _)| i).unwrap_or(line_text.len());
+        let end_byte = line_text.char_indices().nth(end_col).map(|(i, _)| i).unwrap_or(line_text.len());
+
+        let x_start = if start_col == 0 {
+            0.0
+        } else {
+            let rects = para.get_rects_for_range(0..start_byte, RectHeightStyle::Tight, RectWidthStyle::Tight);
+            rects.last().map(|r| r.rect.right).unwrap_or(0.0)
+        };
+
+        let x_end = if end_col == 0 {
+            0.0
+        } else {
+            let rects = para.get_rects_for_range(0..end_byte, RectHeightStyle::Tight, RectWidthStyle::Tight);
+            rects.last().map(|r| r.rect.right).unwrap_or(0.0)
+        };
+
+        (x_start, x_end)
     }
 }
 
