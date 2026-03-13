@@ -109,7 +109,6 @@ impl Color {
             a: self.a,
         }
     }
-}
 
     /// Format as hex string: "#RRGGBB" or "#RRGGBBAA" if alpha != 255.
     pub fn to_hex(&self) -> String {

@@ -84,9 +84,10 @@ pub struct EventState {
     pub is_composing: bool,
 
     // Clipboard state
-    /// Current clipboard data (populated by Copy/Cut handlers, read by Paste).
-    /// TODO: Replace with Wayland wl_data_device integration.
+    /// Current clipboard data (populated by Copy/Cut handlers or Wayland wl_data_device).
     clipboard_data: ClipboardData,
+    /// Clipboard data pending write to Wayland selection (set by copy/cut, read by WaylandState).
+    pub pending_clipboard_write: Option<ClipboardData>,
 
     // Drag and drop state
     /// Whether a DnD drag operation is active (DragStart fired and accepted).
@@ -106,6 +107,12 @@ pub struct EventState {
     active_touches: HashMap<i32, (f32, f32, u32)>,
     /// The ID of the primary touch (first finger down), used for touch-to-pointer coercion.
     primary_touch_id: Option<i32>,
+
+    // Slider drag state
+    /// Element index of slider being dragged (if any).
+    slider_dragging: Option<usize>,
+    /// Cached layout bounds of the slider being dragged (x, width).
+    slider_drag_bounds: (f32, f32),
 }
 
 impl EventState {
@@ -130,6 +137,7 @@ impl EventState {
             pointer_captures: HashMap::new(),
             is_composing: false,
             clipboard_data: ClipboardData::new(),
+            pending_clipboard_write: None,
             dnd_active: false,
             dnd_source: None,
             dnd_data: DragData::new(),
@@ -137,7 +145,21 @@ impl EventState {
             dnd_over_element: None,
             active_touches: HashMap::new(),
             primary_touch_id: None,
+            slider_dragging: None,
+            slider_drag_bounds: (0.0, 0.0),
         }
+    }
+
+    /// Set the clipboard data from the system clipboard (Wayland wl_data_device).
+    /// Called before event dispatch so that paste operations use system clipboard contents.
+    pub fn set_system_clipboard(&mut self, data: ClipboardData) {
+        self.clipboard_data = data;
+    }
+
+    /// Take any pending clipboard write data (from copy/cut operations).
+    /// Called after event dispatch so WaylandState can set the Wayland selection.
+    pub fn take_pending_clipboard_write(&mut self) -> Option<ClipboardData> {
+        self.pending_clipboard_write.take()
     }
 
     /// Returns true if the currently focused element is a text input.
@@ -468,6 +490,40 @@ impl EventState {
             return needs_redraw;
         }
 
+        // Slider drag handling — update value continuously during drag
+        if let Some(slider_idx) = self.slider_dragging {
+            if let Some(element) = get_element_by_preorder(root_element, slider_idx) {
+                let (bx, bw) = self.slider_drag_bounds;
+                match &element.kind {
+                    crate::element::ElementKind::Slider { min, max, step, .. } => {
+                        if let Some(ref handler) = element.on_float_change {
+                            let val = slider_value_from_x(x, bx, bw, *min, *max, *step);
+                            handler(val);
+                            needs_redraw = true;
+                        }
+                    }
+                    crate::element::ElementKind::RangeSlider {
+                        low, high, min, max, step, ..
+                    } => {
+                        if let Some(ref handler) = element.on_range_change {
+                            let click_val = slider_value_from_x(x, bx, bw, *min, *max, *step);
+                            let dist_low = (click_val - low).abs();
+                            let dist_high = (click_val - high).abs();
+                            let (new_low, new_high) = if dist_low <= dist_high {
+                                (click_val.min(*high), *high)
+                            } else {
+                                (*low, click_val.max(*low))
+                            };
+                            handler(new_low, new_high);
+                            needs_redraw = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return needs_redraw;
+        }
+
         // Legacy drag handling (non-DnD drag)
         if self.dragging {
             if let Some(pressed_idx) = self.pressed_element {
@@ -540,6 +596,55 @@ impl EventState {
                         // Clicked on non-focusable: blur current
                         if self.set_focus(None, root_element) {
                             needs_redraw = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Slider: start drag and fire initial value on click-on-track
+        if button == MouseButton::Left {
+            if let Some(pressed_idx) = self.pressed_element {
+                if let Some(element) = get_element_by_preorder(root_element, pressed_idx) {
+                    if !element.disabled {
+                        match &element.kind {
+                            crate::element::ElementKind::Slider { min, max, step, .. } => {
+                                if let Some((bx, _by, bw, _bh)) =
+                                    find_layout_node_bounds(layout, pressed_idx)
+                                {
+                                    self.slider_dragging = Some(pressed_idx);
+                                    self.slider_drag_bounds = (bx, bw);
+                                    if let Some(ref handler) = element.on_float_change {
+                                        let val = slider_value_from_x(x, bx, bw, *min, *max, *step);
+                                        handler(val);
+                                        needs_redraw = true;
+                                    }
+                                }
+                            }
+                            crate::element::ElementKind::RangeSlider {
+                                low, high, min, max, step, ..
+                            } => {
+                                if let Some((bx, _by, bw, _bh)) =
+                                    find_layout_node_bounds(layout, pressed_idx)
+                                {
+                                    self.slider_dragging = Some(pressed_idx);
+                                    self.slider_drag_bounds = (bx, bw);
+                                    if let Some(ref handler) = element.on_range_change {
+                                        // Move the nearest thumb
+                                        let click_val = slider_value_from_x(x, bx, bw, *min, *max, *step);
+                                        let dist_low = (click_val - low).abs();
+                                        let dist_high = (click_val - high).abs();
+                                        let (new_low, new_high) = if dist_low <= dist_high {
+                                            (click_val.min(*high), *high)
+                                        } else {
+                                            (*low, click_val.max(*low))
+                                        };
+                                        handler(new_low, new_high);
+                                        needs_redraw = true;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -685,6 +790,15 @@ impl EventState {
                                 }
                             }
 
+                            // Fire form element callbacks for the clicked element
+                            if let Some(element) = get_element_by_preorder(root_element, pressed_idx) {
+                                if !element.disabled {
+                                    if dispatch_form_element_click(element) {
+                                        needs_redraw = true;
+                                    }
+                                }
+                            }
+
                             // Fire DoubleClick if count == 2
                             if self.click_count == 2 {
                                 if let Some(ref hit_result) = hit {
@@ -739,6 +853,7 @@ impl EventState {
         self.pressed_element = None;
         self.press_pos = None;
         self.dragging = false;
+        self.slider_dragging = None;
 
         // Auto-release pointer capture when all buttons are released
         if self.buttons == 0 {
@@ -1013,7 +1128,8 @@ impl EventState {
                         self.dispatch_keyboard_event(&kb_event, root_element, true);
                     if !default_prevented {
                         if let Some(data) = self.handle_clipboard_copy(root_element) {
-                            self.clipboard_data = data;
+                            self.clipboard_data = data.clone();
+                            self.pending_clipboard_write = Some(data);
                         }
                     }
                     return true;
@@ -1023,7 +1139,8 @@ impl EventState {
                         self.dispatch_keyboard_event(&kb_event, root_element, true);
                     if !default_prevented {
                         if let Some(data) = self.handle_clipboard_cut(root_element) {
-                            self.clipboard_data = data;
+                            self.clipboard_data = data.clone();
+                            self.pending_clipboard_write = Some(data);
                         }
                     }
                     return true;
@@ -1037,6 +1154,74 @@ impl EventState {
                     return true;
                 }
                 _ => {}
+            }
+        }
+
+        // Space/Enter activates focused form elements (button, checkbox, switch, radio)
+        if matches!(key_value, KeyValue::Character(ref c) if c == " ")
+            || matches!(key_value, KeyValue::Enter)
+        {
+            if let Some(focused_idx) = self.focused {
+                // Dispatch KeyDown first
+                let (_, default_prevented) =
+                    self.dispatch_keyboard_event(&kb_event, root_element, true);
+                if !default_prevented {
+                    if let Some(element) = get_element_by_preorder(root_element, focused_idx) {
+                        if !element.disabled {
+                            if dispatch_form_element_activate(element) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+
+        // Arrow keys for focused slider elements
+        if let Some(focused_idx) = self.focused {
+            if let Some(element) = get_element_by_preorder(root_element, focused_idx) {
+                if !element.disabled {
+                    if let crate::element::ElementKind::Slider {
+                        value,
+                        min,
+                        max,
+                        step,
+                    } = &element.kind
+                    {
+                        let direction = match &key_value {
+                            KeyValue::ArrowRight | KeyValue::ArrowUp => Some(1),
+                            KeyValue::ArrowLeft | KeyValue::ArrowDown => Some(-1),
+                            KeyValue::Home => {
+                                if let Some(ref handler) = element.on_float_change {
+                                    handler(*min);
+                                }
+                                return true;
+                            }
+                            KeyValue::End => {
+                                if let Some(ref handler) = element.on_float_change {
+                                    handler(*max);
+                                }
+                                return true;
+                            }
+                            _ => None,
+                        };
+                        if let Some(dir) = direction {
+                            let multiplier = if modifiers.shift { 10 } else { 1 };
+                            if let Some(ref handler) = element.on_float_change {
+                                let new_val = slider_step_value(
+                                    *value,
+                                    *min,
+                                    *max,
+                                    *step,
+                                    dir * multiplier,
+                                );
+                                handler(new_val);
+                            }
+                            return true;
+                        }
+                    }
+                }
             }
         }
 
@@ -1220,7 +1405,7 @@ impl EventState {
         }
 
         // Create paste event with current clipboard data.
-        // TODO: populate from Wayland wl_data_device::selection when integrated.
+        // WaylandState populates clipboard_data from wl_data_device selection before dispatch.
         let event = ClipboardEvent {
             clipboard_data: self.clipboard_data.clone(),
         };
@@ -1344,7 +1529,6 @@ impl EventState {
         if default_prevented || event.clipboard_data.is_empty() {
             None
         } else {
-            // TODO: set Wayland selection via wl_data_device::set_selection
             Some(event.clipboard_data)
         }
     }
@@ -2087,9 +2271,19 @@ fn element_is_focusable(element: &Element) -> bool {
     if let Some(focusable) = element.focusable {
         return focusable;
     }
-    // Default: text inputs, textareas, and elements with click handlers are focusable
-    matches!(element.kind, crate::element::ElementKind::TextInput { .. } | crate::element::ElementKind::Textarea { .. })
-        || element.on_click.is_some()
+    // Default: text inputs, textareas, interactive form elements, and elements with click handlers
+    matches!(
+        element.kind,
+        crate::element::ElementKind::TextInput { .. }
+            | crate::element::ElementKind::Textarea { .. }
+            | crate::element::ElementKind::Button { .. }
+            | crate::element::ElementKind::Checkbox { .. }
+            | crate::element::ElementKind::Radio { .. }
+            | crate::element::ElementKind::Switch { .. }
+            | crate::element::ElementKind::Slider { .. }
+            | crate::element::ElementKind::RangeSlider { .. }
+            | crate::element::ElementKind::Select { .. }
+    ) || element.on_click.is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -2202,6 +2396,10 @@ fn collect_tabbable(
 }
 
 fn element_is_tabbable(element: &Element) -> bool {
+    // Disabled elements are not tabbable
+    if element.disabled {
+        return false;
+    }
     // Explicitly set
     if let Some(focusable) = element.focusable {
         if !focusable {
@@ -2211,9 +2409,19 @@ fn element_is_tabbable(element: &Element) -> bool {
         // focusable=true + tab_index == None means focusable but not tabbable
         return element.tab_index.is_some();
     }
-    // Default tabbable: text inputs, textareas, and elements with on_click
-    matches!(element.kind, crate::element::ElementKind::TextInput { .. } | crate::element::ElementKind::Textarea { .. })
-        || element.on_click.is_some()
+    // Default tabbable: text inputs, textareas, interactive form elements, and elements with on_click
+    matches!(
+        element.kind,
+        crate::element::ElementKind::TextInput { .. }
+            | crate::element::ElementKind::Textarea { .. }
+            | crate::element::ElementKind::Button { .. }
+            | crate::element::ElementKind::Checkbox { .. }
+            | crate::element::ElementKind::Radio { .. }
+            | crate::element::ElementKind::Switch { .. }
+            | crate::element::ElementKind::Slider { .. }
+            | crate::element::ElementKind::RangeSlider { .. }
+            | crate::element::ElementKind::Select { .. }
+    ) || element.on_click.is_some()
 }
 
 /// Find the nearest focus_trap ancestor for a given element index.
@@ -2276,5 +2484,410 @@ fn keysym_to_key_value(keysym: u32) -> KeyValue {
             KeyValue::Character(char::from_u32(k).unwrap_or('?').to_string())
         }
         k => KeyValue::Unknown(k),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Form element click/keyboard dispatch
+// ---------------------------------------------------------------------------
+
+/// Dispatch a click on a form element, firing the appropriate typed callback.
+/// Returns true if a callback was fired.
+fn dispatch_form_element_click(element: &Element) -> bool {
+    use crate::element::ElementKind;
+    match &element.kind {
+        ElementKind::Checkbox {
+            checked,
+            indeterminate,
+            ..
+        } => {
+            if let Some(ref handler) = element.on_bool_change {
+                let new_val = if *indeterminate { true } else { !checked };
+                handler(new_val);
+                return true;
+            }
+        }
+        ElementKind::Switch { on, .. } => {
+            if let Some(ref handler) = element.on_bool_change {
+                handler(!on);
+                return true;
+            }
+        }
+        ElementKind::Radio { value, .. } => {
+            if let Some(ref handler) = element.on_change {
+                handler(value.clone());
+                return true;
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+/// Dispatch a keyboard activation (Space/Enter) on a focused form element.
+/// Returns true if a callback was fired.
+fn dispatch_form_element_activate(element: &Element) -> bool {
+    use crate::element::ElementKind;
+    match &element.kind {
+        ElementKind::Button { .. } => {
+            if let Some(ref handler) = element.on_click {
+                let ce = ClickEvent {
+                    x: 0.0,
+                    y: 0.0,
+                    button: MouseButton::Left,
+                    count: 1,
+                    modifiers: Modifiers::default(),
+                    pointer_type: PointerType::Mouse,
+                };
+                handler(&ce);
+                return true;
+            }
+        }
+        ElementKind::Checkbox { .. } | ElementKind::Switch { .. } | ElementKind::Radio { .. } => {
+            return dispatch_form_element_click(element);
+        }
+        _ => {}
+    }
+    false
+}
+
+/// Calculate a slider value from a pointer x-position within the element bounds.
+pub fn slider_value_from_x(
+    x: f32,
+    bounds_x: f32,
+    bounds_width: f32,
+    min: f64,
+    max: f64,
+    step: Option<f64>,
+) -> f64 {
+    let ratio = ((x - bounds_x) / bounds_width).clamp(0.0, 1.0) as f64;
+    let raw = min + ratio * (max - min);
+    if let Some(s) = step {
+        if s > 0.0 {
+            (((raw - min) / s).round() * s + min).clamp(min, max)
+        } else {
+            raw
+        }
+    } else {
+        raw
+    }
+}
+
+/// Find the layout node for a given element pre-order index.
+fn find_layout_node_bounds(layout: &LayoutNode, target_idx: usize) -> Option<(f32, f32, f32, f32)> {
+    if layout.element_index == target_idx {
+        return Some((layout.bounds.x, layout.bounds.y, layout.bounds.width, layout.bounds.height));
+    }
+    for child in &layout.children {
+        if let Some(bounds) = find_layout_node_bounds(child, target_idx) {
+            return Some(bounds);
+        }
+    }
+    None
+}
+
+/// Adjust a slider value by a step increment (for arrow key handling).
+pub fn slider_step_value(
+    current: f64,
+    min: f64,
+    max: f64,
+    step: Option<f64>,
+    direction: i32,
+) -> f64 {
+    let step_size = step.unwrap_or((max - min) / 100.0);
+    let new_val = current + (direction as f64) * step_size;
+    new_val.clamp(min, max)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    // --- Slider math tests ---
+
+    #[test]
+    fn test_slider_value_from_x_center() {
+        let val = slider_value_from_x(150.0, 100.0, 200.0, 0.0, 100.0, None);
+        assert!((val - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_value_from_x_at_start() {
+        let val = slider_value_from_x(100.0, 100.0, 200.0, 0.0, 100.0, None);
+        assert!((val - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_value_from_x_at_end() {
+        let val = slider_value_from_x(300.0, 100.0, 200.0, 0.0, 100.0, None);
+        assert!((val - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_value_from_x_clamped_below() {
+        let val = slider_value_from_x(50.0, 100.0, 200.0, 0.0, 100.0, None);
+        assert!((val - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_value_from_x_clamped_above() {
+        let val = slider_value_from_x(400.0, 100.0, 200.0, 0.0, 100.0, None);
+        assert!((val - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_value_from_x_with_step() {
+        // At x=160 (ratio=0.3), raw=30.0, step=10 -> snaps to 30.0
+        let val = slider_value_from_x(160.0, 100.0, 200.0, 0.0, 100.0, Some(10.0));
+        assert!((val - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_value_from_x_step_snapping() {
+        // At x=155 (ratio=0.275), raw=27.5, step=10 -> rounds to 30.0
+        let val = slider_value_from_x(155.0, 100.0, 200.0, 0.0, 100.0, Some(10.0));
+        assert!((val - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_value_from_x_custom_range() {
+        // Range -50..50, at midpoint
+        let val = slider_value_from_x(200.0, 100.0, 200.0, -50.0, 50.0, None);
+        assert!((val - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_step_value_increment() {
+        let val = slider_step_value(50.0, 0.0, 100.0, Some(5.0), 1);
+        assert!((val - 55.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_step_value_decrement() {
+        let val = slider_step_value(50.0, 0.0, 100.0, Some(5.0), -1);
+        assert!((val - 45.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_step_value_clamp_max() {
+        let val = slider_step_value(98.0, 0.0, 100.0, Some(5.0), 1);
+        assert!((val - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_step_value_clamp_min() {
+        let val = slider_step_value(2.0, 0.0, 100.0, Some(5.0), -1);
+        assert!((val - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_slider_step_value_no_step() {
+        // Default step = (100-0)/100 = 1.0
+        let val = slider_step_value(50.0, 0.0, 100.0, None, 1);
+        assert!((val - 51.0).abs() < 0.01);
+    }
+
+    // --- Form element click dispatch tests ---
+
+    #[test]
+    fn test_checkbox_click_toggles() {
+        let toggled = Rc::new(RefCell::new(None));
+        let toggled_clone = toggled.clone();
+
+        let elem = checkbox(false).on_toggle(move |val| {
+            *toggled_clone.borrow_mut() = Some(val);
+        });
+
+        let fired = dispatch_form_element_click(&elem);
+        assert!(fired);
+        assert_eq!(*toggled.borrow(), Some(true));
+    }
+
+    #[test]
+    fn test_checkbox_click_unchecks() {
+        let toggled = Rc::new(RefCell::new(None));
+        let toggled_clone = toggled.clone();
+
+        let elem = checkbox(true).on_toggle(move |val| {
+            *toggled_clone.borrow_mut() = Some(val);
+        });
+
+        let fired = dispatch_form_element_click(&elem);
+        assert!(fired);
+        assert_eq!(*toggled.borrow(), Some(false));
+    }
+
+    #[test]
+    fn test_checkbox_indeterminate_becomes_checked() {
+        let toggled = Rc::new(RefCell::new(None));
+        let toggled_clone = toggled.clone();
+
+        let elem = checkbox(false).indeterminate(true).on_toggle(move |val| {
+            *toggled_clone.borrow_mut() = Some(val);
+        });
+
+        dispatch_form_element_click(&elem);
+        assert_eq!(*toggled.borrow(), Some(true));
+    }
+
+    #[test]
+    fn test_switch_click_toggles_on() {
+        let toggled = Rc::new(RefCell::new(None));
+        let toggled_clone = toggled.clone();
+
+        let elem = switch(false).on_toggle(move |val| {
+            *toggled_clone.borrow_mut() = Some(val);
+        });
+
+        dispatch_form_element_click(&elem);
+        assert_eq!(*toggled.borrow(), Some(true));
+    }
+
+    #[test]
+    fn test_switch_click_toggles_off() {
+        let toggled = Rc::new(RefCell::new(None));
+        let toggled_clone = toggled.clone();
+
+        let elem = switch(true).on_toggle(move |val| {
+            *toggled_clone.borrow_mut() = Some(val);
+        });
+
+        dispatch_form_element_click(&elem);
+        assert_eq!(*toggled.borrow(), Some(false));
+    }
+
+    #[test]
+    fn test_radio_click_fires_value() {
+        let selected = Rc::new(RefCell::new(None));
+        let selected_clone = selected.clone();
+
+        let elem = radio(false, "size", "large").on_change(move |val| {
+            *selected_clone.borrow_mut() = Some(val);
+        });
+
+        dispatch_form_element_click(&elem);
+        assert_eq!(*selected.borrow(), Some("large".to_string()));
+    }
+
+    #[test]
+    fn test_checkbox_no_handler_returns_false() {
+        let elem = checkbox(false);
+        assert!(!dispatch_form_element_click(&elem));
+    }
+
+    #[test]
+    fn test_container_click_returns_false() {
+        let elem = container();
+        assert!(!dispatch_form_element_click(&elem));
+    }
+
+    // --- Form element keyboard activation tests ---
+
+    #[test]
+    fn test_button_activate_fires_click() {
+        let clicked = Rc::new(RefCell::new(false));
+        let clicked_clone = clicked.clone();
+
+        let elem = button("Submit").on_click(move |_| {
+            *clicked_clone.borrow_mut() = true;
+            EventResult::Stop
+        });
+
+        let fired = dispatch_form_element_activate(&elem);
+        assert!(fired);
+        assert!(*clicked.borrow());
+    }
+
+    #[test]
+    fn test_checkbox_activate_toggles() {
+        let toggled = Rc::new(RefCell::new(None));
+        let toggled_clone = toggled.clone();
+
+        let elem = checkbox(false).on_toggle(move |val| {
+            *toggled_clone.borrow_mut() = Some(val);
+        });
+
+        dispatch_form_element_activate(&elem);
+        assert_eq!(*toggled.borrow(), Some(true));
+    }
+
+    #[test]
+    fn test_switch_activate_toggles() {
+        let toggled = Rc::new(RefCell::new(None));
+        let toggled_clone = toggled.clone();
+
+        let elem = switch(true).on_toggle(move |val| {
+            *toggled_clone.borrow_mut() = Some(val);
+        });
+
+        dispatch_form_element_activate(&elem);
+        assert_eq!(*toggled.borrow(), Some(false));
+    }
+
+    // --- Focusability tests ---
+
+    #[test]
+    fn test_button_is_focusable() {
+        let elem = button("Click me");
+        assert!(element_is_focusable(&elem));
+    }
+
+    #[test]
+    fn test_checkbox_is_focusable() {
+        let elem = checkbox(false);
+        assert!(element_is_focusable(&elem));
+    }
+
+    #[test]
+    fn test_radio_is_focusable() {
+        let elem = radio(false, "g", "v");
+        assert!(element_is_focusable(&elem));
+    }
+
+    #[test]
+    fn test_switch_is_focusable() {
+        let elem = switch(false);
+        assert!(element_is_focusable(&elem));
+    }
+
+    #[test]
+    fn test_slider_is_focusable() {
+        let elem = slider(50.0, 0.0, 100.0);
+        assert!(element_is_focusable(&elem));
+    }
+
+    #[test]
+    fn test_disabled_not_focusable() {
+        let elem = button("Click me").disabled(true);
+        assert!(!element_is_focusable(&elem));
+    }
+
+    #[test]
+    fn test_container_not_focusable_by_default() {
+        let elem = container();
+        assert!(!element_is_focusable(&elem));
+    }
+
+    // --- Tabbability tests ---
+
+    #[test]
+    fn test_button_is_tabbable() {
+        let elem = button("Click me");
+        assert!(element_is_tabbable(&elem));
+    }
+
+    #[test]
+    fn test_disabled_not_tabbable() {
+        let elem = checkbox(false).disabled(true);
+        assert!(!element_is_tabbable(&elem));
+    }
+
+    #[test]
+    fn test_slider_is_tabbable() {
+        let elem = slider(50.0, 0.0, 100.0);
+        assert!(element_is_tabbable(&elem));
     }
 }

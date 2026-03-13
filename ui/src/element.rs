@@ -425,6 +425,11 @@ pub struct Element {
     pub tab_index: Option<i32>,
     pub focus_trap: bool,
 
+    // Form element callbacks (typed)
+    pub on_bool_change: Option<Box<dyn Fn(bool)>>,
+    pub on_float_change: Option<Box<dyn Fn(f64)>>,
+    pub on_range_change: Option<Box<dyn Fn(f64, f64)>>,
+
     // Form element properties
     pub disabled: bool,
     pub read_only: bool,
@@ -622,6 +627,10 @@ impl Default for Element {
             focusable: None,
             tab_index: None,
             focus_trap: false,
+            // Form element callbacks (typed)
+            on_bool_change: None,
+            on_float_change: None,
+            on_range_change: None,
             // Form element properties
             disabled: false,
             read_only: false,
@@ -2039,6 +2048,24 @@ impl Element {
     }
     pub fn loading(mut self, on: bool) -> Self {
         self.loading = on;
+        self
+    }
+
+    /// Set a boolean change callback (for Checkbox and Switch toggle events).
+    pub fn on_toggle(mut self, f: impl Fn(bool) + 'static) -> Self {
+        self.on_bool_change = Some(Box::new(f));
+        self
+    }
+
+    /// Set a float value change callback (for Slider value changes).
+    pub fn on_value_change(mut self, f: impl Fn(f64) + 'static) -> Self {
+        self.on_float_change = Some(Box::new(f));
+        self
+    }
+
+    /// Set a range change callback (for RangeSlider low/high changes).
+    pub fn on_range_change(mut self, f: impl Fn(f64, f64) + 'static) -> Self {
+        self.on_range_change = Some(Box::new(f));
         self
     }
 

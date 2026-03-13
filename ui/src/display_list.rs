@@ -1164,6 +1164,209 @@ fn emit_commands(
         emit_select(element, &bounds, options, selected, placeholder, theme, commands);
     }
 
+    // Color picker (closed state: swatch showing current color)
+    if let ElementKind::ColorPicker { value } = element.kind {
+        // Swatch: rounded square showing the current color
+        commands.push(DrawCommand::Rect {
+            bounds: bounds.clone(),
+            background: value,
+            corner_radii: CornerRadii::uniform(6.0),
+            border: Some(Border {
+                color: if value.is_dark() {
+                    crate::color::rgba(255, 255, 255, 60)
+                } else {
+                    crate::color::rgba(0, 0, 0, 40)
+                },
+                width: 1.0,
+            }),
+            border_style: BorderStyle::Solid,
+        });
+    }
+
+    // Date/time picker (closed state: input showing formatted value)
+    if let ElementKind::DatePicker { ref value, variant } = element.kind {
+        let bg = element.background.unwrap_or(theme.input_bg);
+        let border_color = if element.error.is_some() { theme.danger } else { theme.input_border };
+
+        commands.push(DrawCommand::Rect {
+            bounds: bounds.clone(),
+            background: bg,
+            corner_radii: CornerRadii::uniform(6.0),
+            border: Some(Border { color: border_color, width: 1.0 }),
+            border_style: BorderStyle::Solid,
+        });
+
+        let display_text = value.as_deref().unwrap_or(match variant {
+            DatePickerVariant::Date => "YYYY-MM-DD",
+            DatePickerVariant::Time => "HH:MM",
+            DatePickerVariant::DateTime => "YYYY-MM-DD HH:MM",
+        });
+        let text_color = if value.is_some() { theme.text } else { theme.text_placeholder };
+
+        commands.push(DrawCommand::Text {
+            text: display_text.to_string(),
+            position: Point { x: bounds.x + 12.0, y: bounds.y + 8.0 },
+            font_size: element.font_size,
+            color: text_color,
+            max_width: bounds.width - 40.0,
+            font_family: element.font_family.clone(),
+            font_weight: element.font_weight,
+            font_italic: element.font_italic,
+            line_height: element.line_height,
+            text_align: None,
+            max_lines: Some(1),
+            text_overflow_ellipsis: false,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            underline: false,
+            strikethrough: false,
+            overline: false,
+            text_decoration_style: None,
+            text_decoration_color: None,
+            text_shadow: Vec::new(),
+            font_features: Vec::new(),
+            font_variations: Vec::new(),
+            text_direction: None,
+            locale: None,
+            cursor_byte_offset: None,
+            selection_byte_range: None,
+            scroll_offset: 0.0,
+            preedit_byte_range: None,
+        });
+
+        // Calendar/clock icon (small indicator on the right)
+        let icon_x = bounds.x + bounds.width - 28.0;
+        let icon_cy = bounds.y + bounds.height / 2.0;
+        let icon_path = match variant {
+            DatePickerVariant::Date | DatePickerVariant::DateTime => {
+                // Simple calendar icon
+                format!(
+                    "M {} {} h 12 v 12 h -12 Z M {} {} h 12 M {} {} v 12 M {} {} v 12",
+                    icon_x, icon_cy - 6.0,
+                    icon_x, icon_cy - 2.0,
+                    icon_x + 4.0, icon_cy - 6.0,
+                    icon_x + 8.0, icon_cy - 6.0
+                )
+            }
+            DatePickerVariant::Time => {
+                // Simple clock icon (circle + hands)
+                format!(
+                    "M {} {} m 6 0 a 6 6 0 1 0 -12 0 a 6 6 0 1 0 12 0 M {} {} v -4 M {} {} h 3",
+                    icon_x, icon_cy,
+                    icon_x, icon_cy,
+                    icon_x, icon_cy,
+                )
+            }
+        };
+        commands.push(DrawCommand::Path {
+            data: ShapeData {
+                path_data: icon_path,
+                fill: None,
+                stroke: Some((theme.text_secondary, 1.5)),
+                viewbox: None,
+            },
+            bounds: Rect { x: icon_x - 2.0, y: icon_cy - 8.0, width: 16.0, height: 16.0 },
+        });
+    }
+
+    // File input (button + filename label)
+    if let ElementKind::FileInput { ref files, ref accept, multiple } = element.kind {
+        let bg = element.background.unwrap_or(theme.primary);
+
+        // Button area
+        let button_w = 100.0_f32.min(bounds.width * 0.4);
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: bounds.x, y: bounds.y, width: button_w, height: bounds.height },
+            background: bg,
+            corner_radii: CornerRadii {
+                top_left: 6.0, top_right: 0.0, bottom_right: 0.0, bottom_left: 6.0,
+            },
+            border: Some(Border { color: theme.input_border, width: 1.0 }),
+            border_style: BorderStyle::Solid,
+        });
+        commands.push(DrawCommand::Text {
+            text: if *multiple { "Choose files" } else { "Choose file" }.to_string(),
+            position: Point { x: bounds.x + 8.0, y: bounds.y + 8.0 },
+            font_size: element.font_size,
+            color: crate::color::WHITE,
+            max_width: button_w - 16.0,
+            font_family: element.font_family.clone(),
+            font_weight: Some(500),
+            font_italic: false,
+            line_height: element.line_height,
+            text_align: None,
+            max_lines: Some(1),
+            text_overflow_ellipsis: true,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            underline: false,
+            strikethrough: false,
+            overline: false,
+            text_decoration_style: None,
+            text_decoration_color: None,
+            text_shadow: Vec::new(),
+            font_features: Vec::new(),
+            font_variations: Vec::new(),
+            text_direction: None,
+            locale: None,
+            cursor_byte_offset: None,
+            selection_byte_range: None,
+            scroll_offset: 0.0,
+            preedit_byte_range: None,
+        });
+
+        // File name label area
+        let label_x = bounds.x + button_w;
+        let label_w = bounds.width - button_w;
+        commands.push(DrawCommand::Rect {
+            bounds: Rect { x: label_x, y: bounds.y, width: label_w, height: bounds.height },
+            background: theme.input_bg,
+            corner_radii: CornerRadii {
+                top_left: 0.0, top_right: 6.0, bottom_right: 6.0, bottom_left: 0.0,
+            },
+            border: Some(Border { color: theme.input_border, width: 1.0 }),
+            border_style: BorderStyle::Solid,
+        });
+        let label_text = if files.is_empty() {
+            "No file chosen".to_string()
+        } else if files.len() == 1 {
+            // Show just the filename, not the full path
+            files[0].rsplit('/').next().unwrap_or(&files[0]).to_string()
+        } else {
+            format!("{} files", files.len())
+        };
+        commands.push(DrawCommand::Text {
+            text: label_text,
+            position: Point { x: label_x + 8.0, y: bounds.y + 8.0 },
+            font_size: element.font_size,
+            color: if files.is_empty() { theme.text_placeholder } else { theme.text },
+            max_width: label_w - 16.0,
+            font_family: element.font_family.clone(),
+            font_weight: element.font_weight,
+            font_italic: element.font_italic,
+            line_height: element.line_height,
+            text_align: None,
+            max_lines: Some(1),
+            text_overflow_ellipsis: true,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            underline: false,
+            strikethrough: false,
+            overline: false,
+            text_decoration_style: None,
+            text_decoration_color: None,
+            text_shadow: Vec::new(),
+            font_features: Vec::new(),
+            font_variations: Vec::new(),
+            text_direction: None,
+            locale: None,
+            cursor_byte_offset: None,
+            selection_byte_range: None,
+            scroll_offset: 0.0,
+            preedit_byte_range: None,
+        });
+    }
+
     // Focus ring (drawn for any focused, focusable element)
     // This is emitted after the element's own rendering but before children
     // The runtime sets a flag; here we check disabled
@@ -1453,210 +1656,6 @@ fn emit_select(
         }
 
         commands.push(DrawCommand::PopClip);
-    }
-}
-
-// Color picker (closed state: swatch showing current color)
-    if let ElementKind::ColorPicker { value } = element.kind {
-        // Swatch: rounded square showing the current color
-        commands.push(DrawCommand::Rect {
-            bounds: bounds.clone(),
-            background: value,
-            corner_radii: CornerRadii::uniform(6.0),
-            border: Some(Border {
-                color: if value.is_dark() {
-                    crate::color::rgba(255, 255, 255, 60)
-                } else {
-                    crate::color::rgba(0, 0, 0, 40)
-                },
-                width: 1.0,
-            }),
-            border_style: BorderStyle::Solid,
-        });
-    }
-
-    // Date/time picker (closed state: input showing formatted value)
-    if let ElementKind::DatePicker { ref value, variant } = element.kind {
-        let bg = element.background.unwrap_or(theme.input_bg);
-        let border_color = if element.error.is_some() { theme.danger } else { theme.input_border };
-
-        commands.push(DrawCommand::Rect {
-            bounds: bounds.clone(),
-            background: bg,
-            corner_radii: CornerRadii::uniform(6.0),
-            border: Some(Border { color: border_color, width: 1.0 }),
-            border_style: BorderStyle::Solid,
-        });
-
-        let display_text = value.as_deref().unwrap_or(match variant {
-            DatePickerVariant::Date => "YYYY-MM-DD",
-            DatePickerVariant::Time => "HH:MM",
-            DatePickerVariant::DateTime => "YYYY-MM-DD HH:MM",
-        });
-        let text_color = if value.is_some() { theme.text } else { theme.text_placeholder };
-
-        commands.push(DrawCommand::Text {
-            text: display_text.to_string(),
-            position: Point { x: bounds.x + 12.0, y: bounds.y + 8.0 },
-            font_size: element.font_size,
-            color: text_color,
-            max_width: bounds.width - 40.0,
-            font_family: element.font_family.clone(),
-            font_weight: element.font_weight,
-            font_italic: element.font_italic,
-            line_height: element.line_height,
-            text_align: None,
-            max_lines: Some(1),
-            text_overflow_ellipsis: false,
-            letter_spacing: 0.0,
-            word_spacing: 0.0,
-            underline: false,
-            strikethrough: false,
-            overline: false,
-            text_decoration_style: None,
-            text_decoration_color: None,
-            text_shadow: Vec::new(),
-            font_features: Vec::new(),
-            font_variations: Vec::new(),
-            text_direction: None,
-            locale: None,
-            cursor_byte_offset: None,
-            selection_byte_range: None,
-            scroll_offset: 0.0,
-            preedit_byte_range: None,
-        });
-
-        // Calendar/clock icon (small indicator on the right)
-        let icon_x = bounds.x + bounds.width - 28.0;
-        let icon_cy = bounds.y + bounds.height / 2.0;
-        let icon_path = match variant {
-            DatePickerVariant::Date | DatePickerVariant::DateTime => {
-                // Simple calendar icon
-                format!(
-                    "M {} {} h 12 v 12 h -12 Z M {} {} h 12 M {} {} v 12 M {} {} v 12",
-                    icon_x, icon_cy - 6.0,
-                    icon_x, icon_cy - 2.0,
-                    icon_x + 4.0, icon_cy - 6.0,
-                    icon_x + 8.0, icon_cy - 6.0
-                )
-            }
-            DatePickerVariant::Time => {
-                // Simple clock icon (circle + hands)
-                format!(
-                    "M {} {} m 6 0 a 6 6 0 1 0 -12 0 a 6 6 0 1 0 12 0 M {} {} v -4 M {} {} h 3",
-                    icon_x, icon_cy,
-                    icon_x, icon_cy,
-                    icon_x, icon_cy,
-                )
-            }
-        };
-        commands.push(DrawCommand::Path {
-            data: ShapeData {
-                path_data: icon_path,
-                fill: None,
-                stroke: Some((theme.text_secondary, 1.5)),
-                viewbox: None,
-            },
-            bounds: Rect { x: icon_x - 2.0, y: icon_cy - 8.0, width: 16.0, height: 16.0 },
-        });
-    }
-
-    // File input (button + filename label)
-    if let ElementKind::FileInput { ref files, ref accept, multiple } = element.kind {
-        let bg = element.background.unwrap_or(theme.primary);
-
-        // Button area
-        let button_w = 100.0_f32.min(bounds.width * 0.4);
-        commands.push(DrawCommand::Rect {
-            bounds: Rect { x: bounds.x, y: bounds.y, width: button_w, height: bounds.height },
-            background: bg,
-            corner_radii: CornerRadii {
-                top_left: 6.0, top_right: 0.0, bottom_right: 0.0, bottom_left: 6.0,
-            },
-            border: Some(Border { color: theme.input_border, width: 1.0 }),
-            border_style: BorderStyle::Solid,
-        });
-        commands.push(DrawCommand::Text {
-            text: if *multiple { "Choose files" } else { "Choose file" }.to_string(),
-            position: Point { x: bounds.x + 8.0, y: bounds.y + 8.0 },
-            font_size: element.font_size,
-            color: crate::color::WHITE,
-            max_width: button_w - 16.0,
-            font_family: element.font_family.clone(),
-            font_weight: Some(500),
-            font_italic: false,
-            line_height: element.line_height,
-            text_align: None,
-            max_lines: Some(1),
-            text_overflow_ellipsis: true,
-            letter_spacing: 0.0,
-            word_spacing: 0.0,
-            underline: false,
-            strikethrough: false,
-            overline: false,
-            text_decoration_style: None,
-            text_decoration_color: None,
-            text_shadow: Vec::new(),
-            font_features: Vec::new(),
-            font_variations: Vec::new(),
-            text_direction: None,
-            locale: None,
-            cursor_byte_offset: None,
-            selection_byte_range: None,
-            scroll_offset: 0.0,
-            preedit_byte_range: None,
-        });
-
-        // File name label area
-        let label_x = bounds.x + button_w;
-        let label_w = bounds.width - button_w;
-        commands.push(DrawCommand::Rect {
-            bounds: Rect { x: label_x, y: bounds.y, width: label_w, height: bounds.height },
-            background: theme.input_bg,
-            corner_radii: CornerRadii {
-                top_left: 0.0, top_right: 6.0, bottom_right: 6.0, bottom_left: 0.0,
-            },
-            border: Some(Border { color: theme.input_border, width: 1.0 }),
-            border_style: BorderStyle::Solid,
-        });
-        let label_text = if files.is_empty() {
-            "No file chosen".to_string()
-        } else if files.len() == 1 {
-            // Show just the filename, not the full path
-            files[0].rsplit('/').next().unwrap_or(&files[0]).to_string()
-        } else {
-            format!("{} files", files.len())
-        };
-        commands.push(DrawCommand::Text {
-            text: label_text,
-            position: Point { x: label_x + 8.0, y: bounds.y + 8.0 },
-            font_size: element.font_size,
-            color: if files.is_empty() { theme.text_placeholder } else { theme.text },
-            max_width: label_w - 16.0,
-            font_family: element.font_family.clone(),
-            font_weight: element.font_weight,
-            font_italic: element.font_italic,
-            line_height: element.line_height,
-            text_align: None,
-            max_lines: Some(1),
-            text_overflow_ellipsis: true,
-            letter_spacing: 0.0,
-            word_spacing: 0.0,
-            underline: false,
-            strikethrough: false,
-            overline: false,
-            text_decoration_style: None,
-            text_decoration_color: None,
-            text_shadow: Vec::new(),
-            font_features: Vec::new(),
-            font_variations: Vec::new(),
-            text_direction: None,
-            locale: None,
-            cursor_byte_offset: None,
-            selection_byte_range: None,
-            scroll_offset: 0.0,
-            preedit_byte_range: None,
-        });
     }
 }
 

@@ -2260,52 +2260,59 @@ Files changed:
 - `ui/src/event_dispatch.rs` -- text input keyboard/mouse handling
 - `ui/src/wayland.rs` -- clipboard (wl_data_device binding)
 
-### Phase 3: Button, Checkbox, Radio, Switch
+### Phase 3: Button, Checkbox, Radio, Switch — DONE
 
 **Simple elements with clear visual specs.**
 
-1. Button element with variants.
-2. Checkbox with check/indeterminate rendering.
-3. Radio button with circle rendering.
-4. Switch/toggle with thumb animation.
+1. ✅ Button element with variants (Primary, Secondary, Ghost, Danger).
+2. ✅ Checkbox with check/indeterminate rendering.
+3. ✅ Radio button with circle rendering.
+4. ✅ Switch/toggle with thumb rendering.
+5. ✅ Typed callbacks: `on_toggle(bool)` for Checkbox/Switch, `on_change(String)` for Radio.
+6. ✅ Click dispatch: Checkbox toggles, Switch toggles, Radio fires value.
+7. ✅ Keyboard activation: Space/Enter fires form element callbacks.
+8. ✅ Focusability: all form elements are focusable and tabbable by default.
+9. ✅ Disabled elements are not focusable/tabbable.
+10. ✅ 28 unit tests for slider math, form click/activate dispatch, focusability.
+
+**Remaining (deferred):** Thumb animation for Switch, check animation for Checkbox.
 
 Files changed:
-- `ui/src/element.rs` -- new `ElementKind` variants
-- `ui/src/display_list.rs` -- rendering for each
-- `ui/src/renderer.rs` -- Path rendering (checkmark, circles)
-- `ui/src/layout.rs` -- layout for checkbox+label, radio+label, switch+label
-- `ui/src/event_dispatch.rs` -- click/space handlers for each
+- `ui/src/element.rs` -- new `ElementKind` variants, typed callback fields, builder methods
+- `ui/src/display_list.rs` -- rendering for each (+ fix: ColorPicker/DatePicker/FileInput moved inside emit_commands)
+- `ui/src/event_dispatch.rs` -- click/space/keyboard handlers, focusability, tabbability, slider math helpers, tests
+- `ui/src/color.rs` -- fix: stray `}` closing impl block early
 
-### Phase 4: Slider
+### Phase 4: Slider — DONE
 
 **Requires drag interaction which already exists.**
 
-1. Slider element with track + thumb rendering.
-2. Drag interaction for thumb.
-3. Click-on-track to jump.
-4. Step snapping.
-5. Range slider variant.
-6. Tick marks.
-7. Value tooltip.
+1. ✅ Slider element with track + thumb rendering.
+2. ✅ Drag interaction for thumb (pointer down + move fires on_float_change continuously).
+3. ✅ Click-on-track to jump (calculates value from x position, fires callback).
+4. ✅ Step snapping (rounds to nearest step multiple).
+5. ✅ Range slider variant (two thumbs, moves nearest thumb on click/drag).
+6. ✅ Typed callbacks: `on_value_change(f64)` for Slider, `on_range_change(f64, f64)` for RangeSlider.
+7. ✅ Keyboard: Arrow keys increment/decrement, Shift+Arrow for 10x step, Home/End for min/max.
+8. Tick marks — rendering only, no interaction needed.
+9. Value tooltip — deferred (needs popup).
 
 Files changed:
-- `ui/src/element.rs` -- `Slider`, `RangeSlider` kinds
+- `ui/src/element.rs` -- `Slider`, `RangeSlider` kinds, `on_float_change`/`on_range_change` callbacks
 - `ui/src/display_list.rs` -- track/thumb/tick rendering
-- `ui/src/renderer.rs` -- gradient rendering for tracks
-- `ui/src/event_dispatch.rs` -- slider drag handling
+- `ui/src/event_dispatch.rs` -- slider drag handling, click-on-track, keyboard arrows, math helpers
 
-### Phase 5: Progress Bar and Spinner
+### Phase 5: Progress Bar and Spinner — DONE
 
 **No interaction, rendering only.**
 
-1. Determinate progress bar.
-2. Indeterminate progress bar animation.
-3. Circular spinner animation.
+1. ✅ Determinate progress bar.
+2. ✅ Indeterminate progress bar animation.
+3. ✅ Circular spinner animation.
 
 Files changed:
-- `ui/src/element.rs` -- `Progress` kind
+- `ui/src/element.rs` -- `Progress` kind, `ProgressVariant` enum, builder functions
 - `ui/src/display_list.rs` -- progress rendering
-- `ui/src/renderer.rs` -- arc rendering for spinner
 
 ### Phase 6: Popup Infrastructure
 
