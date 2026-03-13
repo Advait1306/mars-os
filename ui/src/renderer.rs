@@ -55,6 +55,7 @@ impl SkiaRenderer {
                     letter_spacing, word_spacing, underline, strikethrough, overline,
                     text_decoration_style, text_decoration_color, text_shadow,
                     font_features, font_variations,
+                    text_direction, locale,
                     cursor_byte_offset, selection_byte_range, scroll_offset,
                     preedit_byte_range } => {
                     self.draw_text(canvas, text, position, *font_size, color, *max_width,
@@ -63,6 +64,7 @@ impl SkiaRenderer {
                         *word_spacing, *underline, *strikethrough, *overline,
                         *text_decoration_style, text_decoration_color.as_ref(),
                         text_shadow, font_features, font_variations,
+                        *text_direction, locale.as_deref(),
                         *cursor_byte_offset, *selection_byte_range, *scroll_offset,
                         *preedit_byte_range);
                 }
@@ -211,11 +213,13 @@ impl SkiaRenderer {
                 DrawCommand::RichText { spans, position, max_width, font_size, color,
                     font_family, font_weight, font_italic, line_height, text_align,
                     max_lines, text_overflow_ellipsis, letter_spacing, word_spacing, text_shadow,
-                    font_features, font_variations } => {
+                    font_features, font_variations,
+                    text_direction, locale } => {
                     self.draw_rich_text(canvas, spans, position, *max_width, *font_size, color,
                         font_family.as_deref(), *font_weight, *font_italic, *line_height,
                         *text_align, *max_lines, *text_overflow_ellipsis, *letter_spacing,
-                        *word_spacing, text_shadow, font_features, font_variations);
+                        *word_spacing, text_shadow, font_features, font_variations,
+                        *text_direction, locale.as_deref());
                 }
                 DrawCommand::MultilineText { text, bounds, font_size, color,
                     font_family, font_weight, font_italic, line_height,
@@ -573,6 +577,8 @@ impl SkiaRenderer {
         text_shadow: &[(Color, (f32, f32), f64)],
         font_features: &[(String, i32)],
         font_variations: &[(String, f32)],
+        text_direction: Option<crate::style::TextDirection>,
+        locale: Option<&str>,
         cursor_byte_offset: Option<usize>,
         selection_byte_range: Option<(usize, usize)>,
         scroll_offset: f32,
@@ -596,6 +602,14 @@ impl SkiaRenderer {
         }
         if text_overflow_ellipsis {
             para_style.set_ellipsis("\u{2026}");
+        }
+        // Text direction (BiDi)
+        if let Some(dir) = text_direction {
+            use skia_safe::textlayout::TextDirection as SkTextDirection;
+            para_style.set_text_direction(match dir {
+                crate::style::TextDirection::Ltr => SkTextDirection::LTR,
+                crate::style::TextDirection::Rtl => SkTextDirection::RTL,
+            });
         }
 
         // TextStyle
@@ -681,6 +695,11 @@ impl SkiaRenderer {
                     coordinates: &coords,
                 });
             text_style.set_font_arguments(&fa);
+        }
+
+        // Locale for proper line breaking
+        if let Some(loc) = locale {
+            text_style.set_locale(loc);
         }
 
         para_style.set_text_style(&text_style);
@@ -804,6 +823,8 @@ impl SkiaRenderer {
         text_shadow: &[(Color, (f32, f32), f64)],
         font_features: &[(String, i32)],
         font_variations: &[(String, f32)],
+        text_direction: Option<crate::style::TextDirection>,
+        locale: Option<&str>,
     ) {
         use skia_safe::textlayout::{TextDecoration, TextShadow};
         use skia_safe::font_style::{Weight, Width, Slant};
@@ -816,6 +837,14 @@ impl SkiaRenderer {
                 crate::style::TextAlign::Center => SkTextAlign::Center,
                 crate::style::TextAlign::Right => SkTextAlign::Right,
                 crate::style::TextAlign::Justify => SkTextAlign::Justify,
+            });
+        }
+        // Text direction (BiDi)
+        if let Some(dir) = text_direction {
+            use skia_safe::textlayout::TextDirection as SkTextDirection;
+            para_style.set_text_direction(match dir {
+                crate::style::TextDirection::Ltr => SkTextDirection::LTR,
+                crate::style::TextDirection::Rtl => SkTextDirection::RTL,
             });
         }
         if let Some(max) = max_lines {
@@ -870,6 +899,10 @@ impl SkiaRenderer {
                     coordinates: &coords,
                 });
             base_style.set_font_arguments(&fa);
+        }
+        // Locale for line breaking rules
+        if let Some(loc) = locale {
+            base_style.set_locale(loc);
         }
         for (shadow_color, (dx, dy), blur) in text_shadow {
             base_style.add_shadow(TextShadow::new(

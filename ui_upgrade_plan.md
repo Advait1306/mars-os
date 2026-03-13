@@ -15,7 +15,16 @@ Phases 1-7 were already complete. Phase 8 is now DONE:
 - Per-span font features and variations in RichText for mixed typography
 - Threaded through DrawCommand::Text and DrawCommand::RichText
 
-Remaining: Phase 9 (BiDi/i18n), Phase 10 (inline placeholders), Phase 11 (perf optimization)
+Phase 9 (BiDi/i18n) is DONE:
+- `TextDirection` enum (Ltr, Rtl) in `style.rs`
+- `text_direction` and `locale` fields on Element with `.text_direction()`, `.rtl()`, `.locale()` builder methods
+- Same fields on `TextSpan` for per-span BiDi/locale in RichText
+- Threaded through `DrawCommand::Text` and `DrawCommand::RichText`
+- `ParagraphStyle::set_text_direction()` for RTL/LTR paragraph direction
+- `TextStyle::set_locale()` for proper CJK/Arabic line breaking rules
+- Applied in both `draw_text()` and `draw_rich_text()` renderer functions
+
+Remaining: Phase 10 (inline placeholders), Phase 11 (perf optimization)
 
 ## Current State
 ### Plan 3-events: DONE (remaining tasks need VM)

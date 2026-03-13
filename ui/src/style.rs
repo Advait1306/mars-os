@@ -133,6 +133,12 @@ pub enum TextAlign {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextDirection {
+    Ltr,
+    Rtl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextDecorationStyle {
     Solid,
     Double,

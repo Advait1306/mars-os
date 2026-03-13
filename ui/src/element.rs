@@ -263,6 +263,8 @@ pub struct Element {
     pub text_shadow: Vec<(Color, (f32, f32), f64)>,
     pub font_features: Vec<(String, i32)>,
     pub font_variations: Vec<(String, f32)>,
+    pub text_direction: Option<TextDirection>,
+    pub locale: Option<String>,
 
     // Text input cursor state (set by the view when the input is focused)
     pub cursor_offset: Option<usize>,
@@ -474,6 +476,8 @@ impl Default for Element {
             text_shadow: Vec::new(),
             font_features: Vec::new(),
             font_variations: Vec::new(),
+            text_direction: None,
+            locale: None,
             cursor_offset: None,
             selection_range: None,
             scroll_offset: 0.0,
@@ -1417,6 +1421,21 @@ impl Element {
     /// Add a variable font axis value (e.g., "wght" for weight, "wdth" for width).
     pub fn font_variation(mut self, axis: &str, value: f32) -> Self {
         self.font_variations.push((axis.to_string(), value));
+        self
+    }
+    /// Set text direction for BiDi support (LTR or RTL).
+    pub fn text_direction(mut self, dir: TextDirection) -> Self {
+        self.text_direction = Some(dir);
+        self
+    }
+    /// Set RTL text direction.
+    pub fn rtl(mut self) -> Self {
+        self.text_direction = Some(TextDirection::Rtl);
+        self
+    }
+    /// Set locale for proper line breaking (e.g., "ja" for Japanese, "ar" for Arabic).
+    pub fn locale(mut self, locale: &str) -> Self {
+        self.locale = Some(locale.to_string());
         self
     }
     pub fn line_height(mut self, lh: f32) -> Self {

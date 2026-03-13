@@ -5,7 +5,7 @@ use crate::select_state::SelectOption;
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
     BlendMode, Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient,
-    Outline, TextAlign, TextDecorationStyle, Transform,
+    Outline, TextAlign, TextDecorationStyle, TextDirection, Transform,
 };
 use crate::theme::Theme;
 
@@ -57,6 +57,8 @@ pub enum DrawCommand {
         text_shadow: Vec<(Color, (f32, f32), f64)>,
         font_features: Vec<(String, i32)>,
         font_variations: Vec<(String, f32)>,
+        text_direction: Option<TextDirection>,
+        locale: Option<String>,
         // Text input state
         cursor_byte_offset: Option<usize>,
         selection_byte_range: Option<(usize, usize)>,
@@ -170,6 +172,8 @@ pub enum DrawCommand {
         text_shadow: Vec<(Color, (f32, f32), f64)>,
         font_features: Vec<(String, i32)>,
         font_variations: Vec<(String, f32)>,
+        text_direction: Option<TextDirection>,
+        locale: Option<String>,
     },
     /// Multiline text area with cursor, selection, and scrolling.
     MultilineText {
@@ -429,6 +433,8 @@ fn emit_commands(
             text_shadow: element.text_shadow.clone(),
             font_features: element.font_features.clone(),
             font_variations: element.font_variations.clone(),
+            text_direction: element.text_direction,
+            locale: element.locale.clone(),
             cursor_byte_offset: None,
             selection_byte_range: None,
             scroll_offset: 0.0,
@@ -459,6 +465,8 @@ fn emit_commands(
             text_shadow: element.text_shadow.clone(),
             font_features: element.font_features.clone(),
             font_variations: element.font_variations.clone(),
+            text_direction: element.text_direction,
+            locale: element.locale.clone(),
         });
     }
 
@@ -716,6 +724,8 @@ fn emit_commands(
             text_shadow: Vec::new(),
             font_features: Vec::new(),
             font_variations: Vec::new(),
+            text_direction: None,
+            locale: None,
             cursor_byte_offset: None,
             selection_byte_range: None,
             scroll_offset: 0.0,
@@ -796,6 +806,8 @@ fn emit_commands(
                 text_shadow: Vec::new(),
                 font_features: Vec::new(),
                 font_variations: Vec::new(),
+                text_direction: None,
+                locale: None,
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
@@ -856,6 +868,8 @@ fn emit_commands(
                 text_shadow: Vec::new(),
                 font_features: Vec::new(),
                 font_variations: Vec::new(),
+                text_direction: None,
+                locale: None,
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
@@ -916,6 +930,8 @@ fn emit_commands(
                 text_shadow: Vec::new(),
                 font_features: Vec::new(),
                 font_variations: Vec::new(),
+                text_direction: None,
+                locale: None,
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
@@ -1201,6 +1217,8 @@ fn emit_select(
         text_shadow: Vec::new(),
         font_features: Vec::new(),
         font_variations: Vec::new(),
+        text_direction: None,
+        locale: None,
         cursor_byte_offset: None,
         selection_byte_range: None,
         scroll_offset: 0.0,
@@ -1335,6 +1353,8 @@ fn emit_select(
                 text_shadow: Vec::new(),
                 font_features: Vec::new(),
                 font_variations: Vec::new(),
+                text_direction: None,
+                locale: None,
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
