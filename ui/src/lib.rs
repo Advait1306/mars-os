@@ -17,6 +17,7 @@ pub mod scroll;
 pub mod select_state;
 pub mod text_input_state;
 pub mod textarea_state;
+pub mod theme;
 pub mod wayland;
 
 pub use color::*;
@@ -35,6 +36,7 @@ pub use input::{
 };
 pub use animation::{Animation, Easing, From, To};
 pub use select_state::{SelectOption, SelectGroup, SelectState};
+pub use theme::Theme;
 
 /// Run a view as a Wayland application.
 pub fn run<V: View>(view: V, config: SurfaceConfig) {

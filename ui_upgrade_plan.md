@@ -109,9 +109,29 @@ Phase 5 (Progress Bar and Spinner) is DONE:
 - Circular spinner: track circle + arc stroke
 - Builder functions: `progress()`, `progress_indeterminate()`, `spinner()`
 
-Remaining phases (6-12: popup infrastructure, select/dropdown, textarea, IME, color picker, date/time picker, file input) require popup surfaces or VM for Wayland integration. Core form elements are done.
+Phase 7 (Select/Dropdown) is DONE:
+- `ElementKind::Select` with options, selected index, placeholder
+- `SelectState` for keyboard navigation and type-ahead search
+- Inline dropdown rendering with scroll, highlight, checkmark
+- Builder function: `select()`
 
-**Plan 6 Phases 1-5 are DONE.** Next plan: **7** (or remaining phases as needed).
+Phase 8 (Textarea) is DONE:
+- `ElementKind::Textarea` with multiline text
+- `TextareaState` with line wrapping, line numbers, tab handling
+- Vertical/horizontal scrolling, selection across lines, undo/redo
+- Builder function: `textarea()`
+
+Theming system is DONE:
+- `Theme` struct with 40+ color/sizing tokens in `ui/src/theme.rs`
+- `Theme::dark()` and `Theme::light()` presets
+- Theme flows through `build_display_list()` → `emit_commands()` → `emit_select()`
+- All form element rendering uses theme colors instead of hardcoded values
+- Views can override via `View::theme()` trait method
+- Per-element overrides still take precedence over theme
+
+Remaining phases (6: popup infrastructure, 9: IME, 10-12: color/date/file pickers) require popup surfaces or VM for Wayland integration.
+
+**Plan 6 Phases 1-8 + Theming are DONE.**
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

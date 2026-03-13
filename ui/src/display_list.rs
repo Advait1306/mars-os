@@ -7,6 +7,7 @@ use crate::style::{
     BlendMode, Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient,
     Outline, TextAlign, TextDecorationStyle, Transform,
 };
+use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -191,9 +192,10 @@ pub fn build_display_list(
     layout: &LayoutNode,
     root_element: &Element,
     animator: Option<&Animator>,
+    theme: &Theme,
 ) -> Vec<DrawCommand> {
     let mut commands = Vec::new();
-    emit_commands(layout, root_element, animator, &mut commands);
+    emit_commands(layout, root_element, animator, theme, &mut commands);
     commands
 }
 
@@ -201,6 +203,7 @@ fn emit_commands(
     node: &LayoutNode,
     element: &Element,
     animator: Option<&Animator>,
+    theme: &Theme,
     commands: &mut Vec<DrawCommand>,
 ) {
     // Skip hidden elements
@@ -555,7 +558,7 @@ fn emit_commands(
         // Background
         commands.push(DrawCommand::Rect {
             bounds: bounds.clone(),
-            background: element.background.unwrap_or(Color { r: 30, g: 30, b: 34, a: 255 }),
+            background: element.background.unwrap_or(theme.input_bg),
             corner_radii: element.corner_radii,
             border: element.border.clone(),
             border_style: element.border_style,
@@ -611,10 +614,10 @@ fn emit_commands(
     if let ElementKind::Button { ref label, variant } = element.kind {
         // Background color based on variant
         let bg = match variant {
-            ButtonVariant::Primary => Color { r: 66, g: 133, b: 244, a: 255 },
-            ButtonVariant::Secondary => Color { r: 0, g: 0, b: 0, a: 0 },
-            ButtonVariant::Ghost => Color { r: 0, g: 0, b: 0, a: 0 },
-            ButtonVariant::Danger => Color { r: 220, g: 53, b: 69, a: 255 },
+            ButtonVariant::Primary => theme.primary,
+            ButtonVariant::Secondary => crate::color::TRANSPARENT,
+            ButtonVariant::Ghost => crate::color::TRANSPARENT,
+            ButtonVariant::Danger => theme.danger,
         };
         if bg.a > 0 {
             commands.push(DrawCommand::Rect {
@@ -632,7 +635,7 @@ fn emit_commands(
                 background: crate::color::TRANSPARENT,
                 corner_radii: element.corner_radii,
                 border: Some(crate::style::Border {
-                    color: Color { r: 66, g: 133, b: 244, a: 255 },
+                    color: theme.primary,
                     width: 1.0,
                 }),
                 border_style: element.border_style,
@@ -640,8 +643,8 @@ fn emit_commands(
         }
         // Label text centered
         let text_color = match variant {
-            ButtonVariant::Secondary => Color { r: 66, g: 133, b: 244, a: 255 },
-            _ => element.color.unwrap_or(crate::color::WHITE),
+            ButtonVariant::Secondary => theme.primary,
+            _ => element.color.unwrap_or(theme.text),
         };
         commands.push(DrawCommand::Text {
             text: label.clone(),
@@ -676,14 +679,14 @@ fn emit_commands(
         let box_x = bounds.x;
         let box_y = bounds.y + (bounds.height - box_size) / 2.0;
         let fill_color = if checked || indeterminate {
-            Color { r: 66, g: 133, b: 244, a: 255 }
+            theme.check_fill
         } else {
             crate::color::TRANSPARENT
         };
         let border_color = if checked || indeterminate {
-            Color { r: 66, g: 133, b: 244, a: 255 }
+            theme.check_fill
         } else {
-            Color { r: 120, g: 120, b: 120, a: 255 }
+            theme.check_border
         };
         commands.push(DrawCommand::Rect {
             bounds: Rect { x: box_x, y: box_y, width: box_size, height: box_size },
@@ -703,7 +706,7 @@ fn emit_commands(
                         box_x + 13.0, box_y + 5.5
                     ),
                     fill: None,
-                    stroke: Some((crate::color::WHITE, 2.0)),
+                    stroke: Some((theme.check_mark, 2.0)),
                     viewbox: None,
                 },
                 bounds: Rect { x: box_x, y: box_y, width: box_size, height: box_size },
@@ -712,7 +715,7 @@ fn emit_commands(
             // Horizontal dash
             commands.push(DrawCommand::Rect {
                 bounds: Rect { x: box_x + 4.0, y: box_y + 8.0, width: 10.0, height: 2.0 },
-                background: crate::color::WHITE,
+                background: theme.check_mark,
                 corner_radii: CornerRadii::ZERO,
                 border: None,
                 border_style: BorderStyle::Solid,
@@ -724,7 +727,7 @@ fn emit_commands(
                 text: text.clone(),
                 position: Point { x: box_x + box_size + 8.0, y: bounds.y },
                 font_size: element.font_size,
-                color: element.color.unwrap_or(crate::color::WHITE),
+                color: element.color.unwrap_or(theme.text),
                 max_width: bounds.width - box_size - 8.0,
                 font_family: element.font_family.clone(),
                 font_weight: element.font_weight,
@@ -754,9 +757,9 @@ fn emit_commands(
         let cx_pos = bounds.x + circle_size / 2.0;
         let cy_pos = bounds.y + bounds.height / 2.0;
         let border_color = if selected {
-            Color { r: 66, g: 133, b: 244, a: 255 }
+            theme.check_fill
         } else {
-            Color { r: 120, g: 120, b: 120, a: 255 }
+            theme.check_border
         };
         let border_width = if selected { 2.0 } else { 1.0 };
         // Outer circle
@@ -771,7 +774,7 @@ fn emit_commands(
             commands.push(DrawCommand::Circle {
                 center: Point { x: cx_pos, y: cy_pos },
                 radius: 4.0,
-                fill: Some(Color { r: 66, g: 133, b: 244, a: 255 }),
+                fill: Some(theme.check_fill),
                 stroke: None,
             });
         }
@@ -781,7 +784,7 @@ fn emit_commands(
                 text: text.clone(),
                 position: Point { x: bounds.x + circle_size + 8.0, y: bounds.y },
                 font_size: element.font_size,
-                color: element.color.unwrap_or(crate::color::WHITE),
+                color: element.color.unwrap_or(theme.text),
                 max_width: bounds.width - circle_size - 8.0,
                 font_family: element.font_family.clone(),
                 font_weight: element.font_weight,
@@ -812,9 +815,9 @@ fn emit_commands(
         let track_x = bounds.x;
         let track_y = bounds.y + (bounds.height - track_h) / 2.0;
         let track_color = if on {
-            Color { r: 66, g: 133, b: 244, a: 255 }
+            theme.switch_track_on
         } else {
-            Color { r: 80, g: 80, b: 80, a: 255 }
+            theme.switch_track_off
         };
         // Track (pill shape)
         commands.push(DrawCommand::Rect {
@@ -829,7 +832,7 @@ fn emit_commands(
         commands.push(DrawCommand::Circle {
             center: Point { x: thumb_x + 10.0, y: track_y + 12.0 },
             radius: 10.0,
-            fill: Some(crate::color::WHITE),
+            fill: Some(theme.switch_thumb),
             stroke: None,
         });
         // Label
@@ -838,7 +841,7 @@ fn emit_commands(
                 text: text.clone(),
                 position: Point { x: track_x + track_w + 8.0, y: bounds.y },
                 font_size: element.font_size,
-                color: element.color.unwrap_or(crate::color::WHITE),
+                color: element.color.unwrap_or(theme.text),
                 max_width: bounds.width - track_w - 8.0,
                 font_family: element.font_family.clone(),
                 font_weight: element.font_weight,
@@ -873,8 +876,8 @@ fn emit_commands(
         };
         let thumb_x = bounds.x + ratio * bounds.width;
         let thumb_radius = 8.0_f32;
-        let track_fill_color = element.progress_color.unwrap_or(Color { r: 66, g: 133, b: 244, a: 255 });
-        let track_empty_color = element.track_color.unwrap_or(Color { r: 80, g: 80, b: 80, a: 255 });
+        let track_fill_color = element.progress_color.unwrap_or(theme.slider_track_fill);
+        let track_empty_color = element.track_color.unwrap_or(theme.slider_track);
 
         // Track (empty)
         commands.push(DrawCommand::Rect {
@@ -897,14 +900,14 @@ fn emit_commands(
         commands.push(DrawCommand::Circle {
             center: Point { x: thumb_x, y: track_y },
             radius: thumb_radius + 1.0,
-            fill: Some(Color { r: 0, g: 0, b: 0, a: 40 }),
+            fill: Some(Color::new(0, 0, 0, 40)),
             stroke: None,
         });
         // Thumb
         commands.push(DrawCommand::Circle {
             center: Point { x: thumb_x, y: track_y },
             radius: thumb_radius,
-            fill: Some(crate::color::WHITE),
+            fill: Some(theme.slider_thumb),
             stroke: None,
         });
     }
@@ -919,8 +922,8 @@ fn emit_commands(
         let low_x = bounds.x + low_ratio * bounds.width;
         let high_x = bounds.x + high_ratio * bounds.width;
         let thumb_radius = 8.0_f32;
-        let track_fill_color = element.progress_color.unwrap_or(Color { r: 66, g: 133, b: 244, a: 255 });
-        let track_empty_color = element.track_color.unwrap_or(Color { r: 80, g: 80, b: 80, a: 255 });
+        let track_fill_color = element.progress_color.unwrap_or(theme.slider_track_fill);
+        let track_empty_color = element.track_color.unwrap_or(theme.slider_track);
 
         // Track (empty, full width)
         commands.push(DrawCommand::Rect {
@@ -942,22 +945,22 @@ fn emit_commands(
         commands.push(DrawCommand::Circle {
             center: Point { x: low_x, y: track_y },
             radius: thumb_radius,
-            fill: Some(crate::color::WHITE),
+            fill: Some(theme.slider_thumb),
             stroke: None,
         });
         // High thumb
         commands.push(DrawCommand::Circle {
             center: Point { x: high_x, y: track_y },
             radius: thumb_radius,
-            fill: Some(crate::color::WHITE),
+            fill: Some(theme.slider_thumb),
             stroke: None,
         });
     }
 
     // Progress bar / Spinner
     if let ElementKind::Progress { value, variant } = element.kind {
-        let fill_color = element.progress_color.unwrap_or(Color { r: 66, g: 133, b: 244, a: 255 });
-        let track_color_val = element.track_color.unwrap_or(Color { r: 80, g: 80, b: 80, a: 255 });
+        let fill_color = element.progress_color.unwrap_or(theme.progress_fill);
+        let track_color_val = element.track_color.unwrap_or(theme.progress_track);
         match variant {
             ProgressVariant::Bar => {
                 let radius = bounds.height / 2.0;
@@ -1018,7 +1021,7 @@ fn emit_commands(
 
     // Select / Dropdown
     if let ElementKind::Select { ref options, selected, ref placeholder } = element.kind {
-        emit_select(element, &bounds, options, selected, placeholder, commands);
+        emit_select(element, &bounds, options, selected, placeholder, theme, commands);
     }
 
     // Focus ring (drawn for any focused, focusable element)
@@ -1030,7 +1033,7 @@ fn emit_commands(
     }
 
     // Recurse into children, sorted by z-index
-    emit_children_sorted(node, element, animator, commands);
+    emit_children_sorted(node, element, animator, theme, commands);
 
     // Outline (drawn on top of children, outside the element box)
     if let Some(ref outline) = element.outline {
@@ -1069,14 +1072,15 @@ fn emit_select(
     options: &[SelectOption],
     selected: Option<usize>,
     placeholder: &str,
+    theme: &Theme,
     commands: &mut Vec<DrawCommand>,
 ) {
     let border_color = if element.select_open {
-        Color { r: 66, g: 133, b: 244, a: 255 }
+        theme.input_border_focus
     } else {
-        Color { r: 80, g: 80, b: 80, a: 255 }
+        theme.input_border
     };
-    let bg_color = element.background.unwrap_or(Color { r: 30, g: 30, b: 34, a: 255 });
+    let bg_color = element.background.unwrap_or(theme.input_bg);
     let radii = if element.corner_radii.is_zero() {
         CornerRadii::uniform(6.0)
     } else {
@@ -1105,13 +1109,13 @@ fn emit_select(
         } else {
             (
                 placeholder.to_string(),
-                Color { r: 160, g: 160, b: 160, a: 255 },
+                theme.text_placeholder,
             )
         }
     } else {
         (
             placeholder.to_string(),
-            Color { r: 160, g: 160, b: 160, a: 255 },
+            theme.text_placeholder,
         )
     };
 
@@ -1154,7 +1158,7 @@ fn emit_select(
                 chevron_x + chevron_size * 3.0, chevron_cy - chevron_size,
             ),
             fill: None,
-            stroke: Some((Color { r: 160, g: 160, b: 160, a: 255 }, 1.5)),
+            stroke: Some((theme.text_placeholder, 1.5)),
             viewbox: None,
         },
         bounds: Rect {
@@ -1185,17 +1189,17 @@ fn emit_select(
             corner_radii: radii,
             blur: 8.0,
             spread: 0.0,
-            color: Color { r: 0, g: 0, b: 0, a: 80 },
+            color: theme.popup_shadow,
             offset: Point { x: 0.0, y: 2.0 },
         });
 
         // Dropdown background
         commands.push(DrawCommand::Rect {
             bounds: dropdown_bounds.clone(),
-            background: Color { r: 38, g: 38, b: 42, a: 255 },
+            background: theme.popup_bg,
             corner_radii: radii,
             border: Some(Border {
-                color: Color { r: 60, g: 60, b: 60, a: 255 },
+                color: theme.popup_border,
                 width: 1.0,
             }),
             border_style: BorderStyle::Solid,
@@ -1230,7 +1234,7 @@ fn emit_select(
                         width: bounds.width - 8.0,
                         height: item_height,
                     },
-                    background: Color { r: 55, g: 55, b: 60, a: 255 },
+                    background: theme.option_hover_bg,
                     corner_radii: CornerRadii::uniform(4.0),
                     border: None,
                     border_style: BorderStyle::Solid,
@@ -1239,11 +1243,11 @@ fn emit_select(
 
             // Option text
             let opt_color = if opt.disabled {
-                Color { r: 100, g: 100, b: 100, a: 255 }
+                theme.text_disabled
             } else if is_selected {
-                Color { r: 66, g: 133, b: 244, a: 255 }
+                theme.primary
             } else {
-                element.color.unwrap_or(crate::color::WHITE)
+                element.color.unwrap_or(theme.text)
             };
 
             commands.push(DrawCommand::Text {
@@ -1285,7 +1289,7 @@ fn emit_select(
                             check_x + 8.0, check_cy - 4.0
                         ),
                         fill: None,
-                        stroke: Some((Color { r: 66, g: 133, b: 244, a: 255 }, 1.5)),
+                        stroke: Some((theme.primary, 1.5)),
                         viewbox: None,
                     },
                     bounds: Rect {
@@ -1307,6 +1311,7 @@ fn emit_children_sorted(
     node: &LayoutNode,
     element: &Element,
     animator: Option<&Animator>,
+    theme: &Theme,
     commands: &mut Vec<DrawCommand>,
 ) {
     let children: Vec<(usize, &LayoutNode, &Element)> = node
@@ -1327,7 +1332,7 @@ fn emit_children_sorted(
     if !has_z_index {
         // Fast path: no z-index, emit in tree order
         for (_, child_layout, child_element) in &children {
-            emit_commands(child_layout, child_element, animator, commands);
+            emit_commands(child_layout, child_element, animator, theme, commands);
         }
     } else {
         // Partition into: negative z, no z (tree order), positive z
@@ -1348,13 +1353,13 @@ fn emit_children_sorted(
         positive.sort_by_key(|(z, i, _, _)| (*z, *i));
 
         for (_, _, l, e) in &negative {
-            emit_commands(l, e, animator, commands);
+            emit_commands(l, e, animator, theme, commands);
         }
         for (_, l, e) in &normal {
-            emit_commands(l, e, animator, commands);
+            emit_commands(l, e, animator, theme, commands);
         }
         for (_, _, l, e) in &positive {
-            emit_commands(l, e, animator, commands);
+            emit_commands(l, e, animator, theme, commands);
         }
     }
 }

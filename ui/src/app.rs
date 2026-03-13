@@ -40,4 +40,9 @@ pub trait View: 'static {
 
     /// Build the element tree for this frame.
     fn render(&self, cx: &mut crate::reactive::RenderContext) -> crate::element::Element;
+
+    /// Override the default theme. Called once at initialization.
+    fn theme(&self) -> crate::theme::Theme {
+        crate::theme::Theme::default()
+    }
 }

@@ -100,6 +100,9 @@ struct WaylandState {
     animator: Animator,
     last_tick: Instant,
 
+    // Theming
+    theme: crate::theme::Theme,
+
     // Input / event dispatch
     pending_events: Vec<InputEvent>,
     event_state: EventState,
@@ -239,7 +242,7 @@ impl WaylandState {
 
         self.animator.diff_and_update(&keyed_infos, &keyed_bounds);
 
-        let commands = build_display_list(&layout_tree, &element_tree, Some(&self.animator));
+        let commands = build_display_list(&layout_tree, &element_tree, Some(&self.animator), &self.theme);
 
         // Create a Skia raster surface and render
         // Skia N32 premul on little-endian = BGRA = Wayland ARGB8888
@@ -958,6 +961,7 @@ pub fn run_wayland<V: View>(view: V, config: SurfaceConfig) {
         renderer: SkiaRenderer::new(),
         animator: Animator::new(),
         last_tick: Instant::now(),
+        theme: view.borrow().theme(),
         pending_events: Vec::new(),
         event_state: EventState::new(),
         last_layout: None,
