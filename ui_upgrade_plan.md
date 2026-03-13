@@ -265,7 +265,14 @@ Phase 11 (Date/Time Picker — pre-built) is DONE (partial):
 - `DatePickerVariant` enum (Date, Time, DateTime)
 - `ElementKind::DatePicker` with `date_picker()`, `time_picker()`, `datetime_picker()` builders
 - Closed-state rendering: formatted value or placeholder + calendar/clock icon
-- Remaining: popup calendar/time selector UI (needs VM)
+- `DatePickerState` with full calendar navigation state machine
+- `CalendarDate` with ISO parse/format, weekday calculation, ordering
+- `TimeValue` with parse/format, hour/minute increment/decrement with wrapping
+- Calendar grid generation (`calendar_grid()` → weeks of 7 day-slots)
+- Month/year navigation, go-to-today, min/max date range validation
+- `DatePickerFocus` enum for sub-control focus tracking
+- 28 unit tests covering date parsing, calendar math, navigation, grid generation
+- Remaining: popup calendar/time selector UI rendering (needs VM)
 
 Phase 12 (File Input — pre-built) is DONE (partial):
 - `ElementKind::FileInput` with `file_input()` builder, `accept` filter, `multiple` flag

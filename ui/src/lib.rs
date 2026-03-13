@@ -16,6 +16,7 @@ pub mod animator;
 pub mod scroll;
 pub mod select_state;
 pub mod color_picker_state;
+pub mod date_picker_state;
 pub mod text_input_state;
 pub mod textarea_state;
 pub mod svg_render;
@@ -40,6 +41,7 @@ pub use input::{
 pub use animation::{Animation, Easing, From, To};
 pub use select_state::{SelectOption, SelectGroup, SelectState};
 pub use color_picker_state::{ColorPickerState, ColorPickerDrag, parse_hex_color};
+pub use date_picker_state::{DatePickerState, CalendarDate, TimeValue, DatePickerFocus};
 pub use theme::Theme;
 pub use icon_registry::{IconRegistry, IconPack, ResolvedIcon};
 pub use svg_render::{SvgDocument, SvgElement, SvgElementKind, SvgPaint, SvgStroke};
