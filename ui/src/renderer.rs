@@ -17,6 +17,12 @@ struct CacheEntry {
     byte_size: usize,
 }
 
+struct ParagraphCacheEntry {
+    paragraph: skia_safe::textlayout::Paragraph,
+    last_width: f32,
+    last_used_frame: u64,
+}
+
 pub struct SkiaRenderer {
     font_collection: FontCollection,
     image_cache: HashMap<u64, CacheEntry>,
@@ -24,12 +30,20 @@ pub struct SkiaRenderer {
     cache_max_bytes: usize,
     vector_svg_cache: HashMap<u64, crate::svg_render::VectorSvg>,
     icon_registry: crate::icon_registry::IconRegistry,
+    paragraph_cache: HashMap<u64, ParagraphCacheEntry>,
+    frame_counter: u64,
 }
 
 impl SkiaRenderer {
     pub fn new() -> Self {
         let mut font_collection = FontCollection::new();
         font_collection.set_default_font_manager(FontMgr::default(), None);
+        // Pre-warm font collection by resolving common typefaces
+        let common_families = ["sans-serif", "serif", "monospace", "system-ui"];
+        for family in &common_families {
+            font_collection.find_typefaces(&[*family], FontStyle::default());
+        }
+
         Self {
             font_collection,
             image_cache: HashMap::new(),
@@ -37,6 +51,22 @@ impl SkiaRenderer {
             cache_max_bytes: 64 * 1024 * 1024, // 64 MB
             vector_svg_cache: HashMap::new(),
             icon_registry: crate::icon_registry::IconRegistry::new(),
+            paragraph_cache: HashMap::new(),
+            frame_counter: 0,
+        }
+    }
+
+    /// Call at the start of each frame to increment frame counter and evict stale paragraphs.
+    pub fn begin_frame(&mut self) {
+        self.frame_counter += 1;
+        // Every 120 frames, evict paragraph cache entries unused for 60+ frames
+        if self.frame_counter % 120 == 0 {
+            let cutoff = self.frame_counter.saturating_sub(60);
+            self.paragraph_cache.retain(|_, entry| entry.last_used_frame >= cutoff);
+        }
+        // Hard cap: if cache exceeds 512 entries, clear it
+        if self.paragraph_cache.len() > 512 {
+            self.paragraph_cache.clear();
         }
     }
 
@@ -589,8 +619,67 @@ impl SkiaRenderer {
         scroll_offset: f32,
         preedit_byte_range: Option<(usize, usize)>,
     ) {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
         use skia_safe::textlayout::{TextDecoration, TextShadow};
         use skia_safe::font_style::{Weight, Width, Slant};
+
+        // Compute cache key from text content + all style properties (NOT position/width/cursor)
+        let cache_key = {
+            let mut h = DefaultHasher::new();
+            text.hash(&mut h);
+            font_size.to_bits().hash(&mut h);
+            color.hash(&mut h);
+            font_family.hash(&mut h);
+            font_weight.hash(&mut h);
+            font_italic.hash(&mut h);
+            line_height.map(|v| v.to_bits()).hash(&mut h);
+            text_align.hash(&mut h);
+            max_lines.hash(&mut h);
+            text_overflow_ellipsis.hash(&mut h);
+            letter_spacing.to_bits().hash(&mut h);
+            word_spacing.to_bits().hash(&mut h);
+            underline.hash(&mut h);
+            strikethrough.hash(&mut h);
+            overline.hash(&mut h);
+            text_decoration_style.hash(&mut h);
+            text_decoration_color.hash(&mut h);
+            for (c, (dx, dy), blur) in text_shadow {
+                c.hash(&mut h);
+                dx.to_bits().hash(&mut h);
+                dy.to_bits().hash(&mut h);
+                blur.to_bits().hash(&mut h);
+            }
+            for (tag, val) in font_features { tag.hash(&mut h); val.hash(&mut h); }
+            for (axis, val) in font_variations { axis.hash(&mut h); val.to_bits().hash(&mut h); }
+            text_direction.hash(&mut h);
+            locale.hash(&mut h);
+            h.finish()
+        };
+
+        let frame = self.frame_counter;
+
+        // Try cache: take entry, re-layout if width changed, use it
+        if let Some(mut entry) = self.paragraph_cache.remove(&cache_key) {
+            if (entry.last_width - max_width).abs() > 0.01 {
+                entry.paragraph.layout(max_width);
+                entry.last_width = max_width;
+            }
+            entry.last_used_frame = frame;
+
+            let has_input_state = cursor_byte_offset.is_some() || selection_byte_range.is_some()
+                || scroll_offset != 0.0 || preedit_byte_range.is_some();
+
+            if has_input_state {
+                Self::draw_text_input_overlay_static(canvas, &entry.paragraph, text, pos, max_width,
+                    color, cursor_byte_offset, selection_byte_range, scroll_offset, preedit_byte_range);
+            } else {
+                entry.paragraph.paint(canvas, (pos.x, pos.y));
+            }
+
+            self.paragraph_cache.insert(cache_key, entry);
+            return;
+        }
 
         // ParagraphStyle
         let mut para_style = ParagraphStyle::new();
@@ -716,95 +805,119 @@ impl SkiaRenderer {
         let mut paragraph = builder.build();
         paragraph.layout(max_width);
 
-        let has_input_state = cursor_byte_offset.is_some() || selection_byte_range.is_some() || scroll_offset != 0.0 || preedit_byte_range.is_some();
+        let has_input_state = cursor_byte_offset.is_some() || selection_byte_range.is_some()
+            || scroll_offset != 0.0 || preedit_byte_range.is_some();
 
         if has_input_state {
-            // Text input: clip to bounds, apply scroll offset, draw selection/cursor
-            canvas.save();
-            canvas.clip_rect(
-                skia_safe::Rect::from_xywh(pos.x, pos.y, max_width, paragraph.height()),
-                ClipOp::Intersect,
-                true,
-            );
-
-            let text_x = pos.x - scroll_offset;
-            let text_y = pos.y;
-            let para_height = paragraph.height();
-
-            // Draw selection highlight
-            if let Some((start, end)) = selection_byte_range {
-                let rects = paragraph.get_rects_for_range(
-                    start..end,
-                    RectHeightStyle::Tight,
-                    RectWidthStyle::Tight,
-                );
-                let mut sel_paint = Paint::default();
-                sel_paint.set_color(skia_safe::Color::from_argb(80, 100, 150, 255));
-                sel_paint.set_anti_alias(true);
-                for text_box in &rects {
-                    let r = text_box.rect;
-                    canvas.draw_rect(
-                        skia_safe::Rect::from_xywh(text_x + r.left, text_y + r.top, r.width(), r.height()),
-                        &sel_paint,
-                    );
-                }
-            }
-
-            // Paint text
-            paragraph.paint(canvas, (text_x, text_y));
-
-            // Draw preedit underline (IME composition indicator)
-            if let Some((preedit_start, preedit_end)) = preedit_byte_range {
-                if preedit_start < preedit_end && preedit_end <= text.len() {
-                    let rects = paragraph.get_rects_for_range(
-                        preedit_start..preedit_end,
-                        RectHeightStyle::Tight,
-                        RectWidthStyle::Tight,
-                    );
-                    let mut underline_paint = Paint::default();
-                    underline_paint.set_color(to_skia_color(color));
-                    underline_paint.set_anti_alias(true);
-                    underline_paint.set_stroke_width(1.0);
-                    underline_paint.set_style(skia_safe::paint::Style::Stroke);
-                    for text_box in &rects {
-                        let r = text_box.rect;
-                        let y = text_y + r.bottom - 1.0;
-                        canvas.draw_line(
-                            (text_x + r.left, y),
-                            (text_x + r.right, y),
-                            &underline_paint,
-                        );
-                    }
-                }
-            }
-
-            // Draw cursor
-            if let Some(offset) = cursor_byte_offset {
-                let cursor_x = if text.is_empty() || offset == 0 {
-                    0.0
-                } else {
-                    let rects = paragraph.get_rects_for_range(
-                        0..offset.min(text.len()),
-                        RectHeightStyle::Tight,
-                        RectWidthStyle::Tight,
-                    );
-                    rects.last().map(|r| r.rect.right).unwrap_or(0.0)
-                };
-
-                let mut cursor_paint = Paint::default();
-                cursor_paint.set_color(to_skia_color(color));
-                cursor_paint.set_anti_alias(true);
-                cursor_paint.set_stroke_width(1.5);
-                canvas.draw_rect(
-                    skia_safe::Rect::from_xywh(text_x + cursor_x, text_y, 1.5, para_height),
-                    &cursor_paint,
-                );
-            }
-
-            canvas.restore();
+            Self::draw_text_input_overlay_static(canvas, &paragraph, text, pos, max_width,
+                color, cursor_byte_offset, selection_byte_range, scroll_offset, preedit_byte_range);
         } else {
             paragraph.paint(canvas, (pos.x, pos.y));
         }
+
+        // Store in cache
+        self.paragraph_cache.insert(cache_key, ParagraphCacheEntry {
+            paragraph,
+            last_width: max_width,
+            last_used_frame: frame,
+        });
+    }
+
+    /// Draw text input overlays (selection, cursor, preedit) on top of a paragraph.
+    fn draw_text_input_overlay_static(
+        canvas: &Canvas,
+        paragraph: &skia_safe::textlayout::Paragraph,
+        text: &str,
+        pos: &Point,
+        max_width: f32,
+        color: &Color,
+        cursor_byte_offset: Option<usize>,
+        selection_byte_range: Option<(usize, usize)>,
+        scroll_offset: f32,
+        preedit_byte_range: Option<(usize, usize)>,
+    ) {
+        canvas.save();
+        canvas.clip_rect(
+            skia_safe::Rect::from_xywh(pos.x, pos.y, max_width, paragraph.height()),
+            ClipOp::Intersect,
+            true,
+        );
+
+        let text_x = pos.x - scroll_offset;
+        let text_y = pos.y;
+        let para_height = paragraph.height();
+
+        // Draw selection highlight
+        if let Some((start, end)) = selection_byte_range {
+            let rects = paragraph.get_rects_for_range(
+                start..end,
+                RectHeightStyle::Tight,
+                RectWidthStyle::Tight,
+            );
+            let mut sel_paint = Paint::default();
+            sel_paint.set_color(skia_safe::Color::from_argb(80, 100, 150, 255));
+            sel_paint.set_anti_alias(true);
+            for text_box in &rects {
+                let r = text_box.rect;
+                canvas.draw_rect(
+                    skia_safe::Rect::from_xywh(text_x + r.left, text_y + r.top, r.width(), r.height()),
+                    &sel_paint,
+                );
+            }
+        }
+
+        // Paint text
+        paragraph.paint(canvas, (text_x, text_y));
+
+        // Draw preedit underline (IME composition indicator)
+        if let Some((preedit_start, preedit_end)) = preedit_byte_range {
+            if preedit_start < preedit_end && preedit_end <= text.len() {
+                let rects = paragraph.get_rects_for_range(
+                    preedit_start..preedit_end,
+                    RectHeightStyle::Tight,
+                    RectWidthStyle::Tight,
+                );
+                let mut underline_paint = Paint::default();
+                underline_paint.set_color(to_skia_color(color));
+                underline_paint.set_anti_alias(true);
+                underline_paint.set_stroke_width(1.0);
+                underline_paint.set_style(skia_safe::paint::Style::Stroke);
+                for text_box in &rects {
+                    let r = text_box.rect;
+                    let y = text_y + r.bottom - 1.0;
+                    canvas.draw_line(
+                        (text_x + r.left, y),
+                        (text_x + r.right, y),
+                        &underline_paint,
+                    );
+                }
+            }
+        }
+
+        // Draw cursor
+        if let Some(offset) = cursor_byte_offset {
+            let cursor_x = if text.is_empty() || offset == 0 {
+                0.0
+            } else {
+                let rects = paragraph.get_rects_for_range(
+                    0..offset.min(text.len()),
+                    RectHeightStyle::Tight,
+                    RectWidthStyle::Tight,
+                );
+                rects.last().map(|r| r.rect.right).unwrap_or(0.0)
+            };
+
+            let mut cursor_paint = Paint::default();
+            cursor_paint.set_color(to_skia_color(color));
+            cursor_paint.set_anti_alias(true);
+            cursor_paint.set_stroke_width(1.5);
+            canvas.draw_rect(
+                skia_safe::Rect::from_xywh(text_x + cursor_x, text_y, 1.5, para_height),
+                &cursor_paint,
+            );
+        }
+
+        canvas.restore();
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -253,6 +253,7 @@ impl WaylandState {
         {
             let skia_canvas = surface.canvas();
             skia_canvas.clear(skia_safe::Color::TRANSPARENT);
+            self.renderer.begin_frame();
             self.renderer.execute(skia_canvas, &commands);
         }
 

@@ -4,7 +4,7 @@ You have to implement plans in ./plans/ui-upgrade. Some plans are already comple
 
 NOTE: Plan 1 & 2 are already complete before starting this loop.
 
-### Plan 1-text-layout: IN PROGRESS
+### Plan 1-text-layout: COMPLETE
 Phases 1-7 were already complete. Phase 8 is now DONE:
 - `font_features: Vec<(String, i32)>` field on Element and TextSpan
 - `font_variations: Vec<(String, f32)>` field on Element and TextSpan
@@ -33,7 +33,19 @@ Phase 10 (Inline Placeholders) is DONE:
 - Images rendered at placeholder positions via `draw_image()`
 - `.inline_placeholder()` and `.inline_image()` builder methods on Element
 
-Remaining: Phase 11 (perf optimization)
+Phase 11 (Performance Optimization) is DONE:
+- Paragraph cache: `HashMap<u64, ParagraphCacheEntry>` keyed by content+style hash (excludes position/width/cursor state)
+- Cache hit with same width: reuse paragraph directly (zero rebuild cost)
+- Cache hit with different width: re-layout only (skip expensive shaping/building)
+- Cache miss: build, layout, cache for next frame
+- Frame-based LRU eviction: entries unused for 60+ frames swept every 120 frames
+- Hard cap at 512 entries with full clear on overflow
+- `begin_frame()` method on SkiaRenderer for frame counter and eviction
+- FontCollection pre-warming: resolves `sans-serif`, `serif`, `monospace`, `system-ui` at startup
+- Text input overlay extracted to `draw_text_input_overlay_static()` for cache-compatible rendering
+- `Hash` + `Eq` derived on `Color`, `TextAlign`, `TextDirection`, `TextDecorationStyle` for cache key computation
+
+**Plan 1 is now COMPLETE.** All 11 phases implemented.
 
 ## Current State
 ### Plan 3-events: DONE (remaining tasks need VM)

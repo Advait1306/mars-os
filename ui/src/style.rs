@@ -124,7 +124,7 @@ pub enum GridAutoFlow {
     ColumnDense,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextAlign {
     Left,
     Center,
@@ -132,13 +132,13 @@ pub enum TextAlign {
     Justify,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextDirection {
     Ltr,
     Rtl,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextDecorationStyle {
     Solid,
     Double,
