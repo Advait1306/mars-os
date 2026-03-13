@@ -8,7 +8,8 @@ use crate::input::{
 use crate::style::{
     AlignContent, Alignment, Border, BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim,
     Direction, DisplayMode, Filter, FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement,
-    Justify, Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize, Transform,
+    BlendMode, Justify, Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
+    Transform,
 };
 
 pub enum ElementKind {
@@ -115,6 +116,8 @@ pub struct Element {
     pub full_border: Option<FullBorder>,
     pub outline: Option<Outline>,
     pub box_shadows: Vec<BoxShadow>,
+    pub visible: bool,
+    pub blend_mode: BlendMode,
     pub opacity: f32,
     pub filters: Vec<Filter>,
     pub backdrop_filters: Vec<Filter>,
@@ -291,6 +294,8 @@ impl Default for Element {
             full_border: None,
             outline: None,
             box_shadows: Vec::new(),
+            visible: true,
+            blend_mode: BlendMode::Normal,
             opacity: 1.0,
             filters: Vec::new(),
             backdrop_filters: Vec::new(),
@@ -875,6 +880,14 @@ impl Element {
             spread,
             inset: true,
         });
+        self
+    }
+    pub fn hidden(mut self) -> Self {
+        self.visible = false;
+        self
+    }
+    pub fn blend_mode(mut self, mode: BlendMode) -> Self {
+        self.blend_mode = mode;
         self
     }
     pub fn opacity(mut self, o: f32) -> Self {

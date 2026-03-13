@@ -92,6 +92,15 @@ impl SkiaRenderer {
                 DrawCommand::PopFilter => {
                     canvas.restore();
                 }
+                DrawCommand::PushBlendMode { mode } => {
+                    let mut paint = Paint::default();
+                    paint.set_blend_mode(to_skia_blend_mode(*mode));
+                    let rec = SaveLayerRec::default().paint(&paint);
+                    canvas.save_layer(&rec);
+                }
+                DrawCommand::PopBlendMode => {
+                    canvas.restore();
+                }
                 DrawCommand::ApplyBackdropFilter { bounds, corner_radii, filters } => {
                     self.draw_backdrop_filter(canvas, bounds, corner_radii, filters);
                 }
@@ -1073,6 +1082,27 @@ fn build_image_filter(filters: &[crate::style::Filter]) -> Option<skia_safe::Ima
     }
 
     current
+}
+
+fn to_skia_blend_mode(mode: crate::style::BlendMode) -> skia_safe::BlendMode {
+    match mode {
+        crate::style::BlendMode::Normal => skia_safe::BlendMode::SrcOver,
+        crate::style::BlendMode::Multiply => skia_safe::BlendMode::Multiply,
+        crate::style::BlendMode::Screen => skia_safe::BlendMode::Screen,
+        crate::style::BlendMode::Overlay => skia_safe::BlendMode::Overlay,
+        crate::style::BlendMode::Darken => skia_safe::BlendMode::Darken,
+        crate::style::BlendMode::Lighten => skia_safe::BlendMode::Lighten,
+        crate::style::BlendMode::ColorDodge => skia_safe::BlendMode::ColorDodge,
+        crate::style::BlendMode::ColorBurn => skia_safe::BlendMode::ColorBurn,
+        crate::style::BlendMode::HardLight => skia_safe::BlendMode::HardLight,
+        crate::style::BlendMode::SoftLight => skia_safe::BlendMode::SoftLight,
+        crate::style::BlendMode::Difference => skia_safe::BlendMode::Difference,
+        crate::style::BlendMode::Exclusion => skia_safe::BlendMode::Exclusion,
+        crate::style::BlendMode::Hue => skia_safe::BlendMode::Hue,
+        crate::style::BlendMode::Saturation => skia_safe::BlendMode::Saturation,
+        crate::style::BlendMode::Color => skia_safe::BlendMode::Color,
+        crate::style::BlendMode::Luminosity => skia_safe::BlendMode::Luminosity,
+    }
 }
 
 fn to_skia_color(c: &Color) -> skia_safe::Color {

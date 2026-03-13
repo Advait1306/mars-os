@@ -3,8 +3,8 @@ use crate::color::Color;
 use crate::element::{Element, ElementKind, ImageSource, TextSpan};
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
-    Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient, Outline,
-    TextAlign, TextDecorationStyle, Transform,
+    BlendMode, Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient,
+    Outline, TextAlign, TextDecorationStyle, Transform,
 };
 
 #[derive(Debug, Clone)]
@@ -110,6 +110,10 @@ pub enum DrawCommand {
         offset: Point,
     },
     PopTranslate,
+    PushBlendMode {
+        mode: BlendMode,
+    },
+    PopBlendMode,
     PushTransform {
         transforms: Vec<Transform>,
         /// Origin in absolute coordinates (computed from bounds + transform_origin fraction).
@@ -184,6 +188,7 @@ fn emit_commands(
     // Track pops needed at the end
     let mut pop_translate = false;
     let mut pop_transform = false;
+    let mut pop_blend = false;
     let mut pop_layer = false;
     let mut pop_clip = false;
     let mut pop_filter = false;
@@ -231,6 +236,14 @@ fn emit_commands(
         pop_layer = true;
     }
 
+    // Blend mode
+    if element.blend_mode != BlendMode::Normal {
+        commands.push(DrawCommand::PushBlendMode {
+            mode: element.blend_mode,
+        });
+        pop_blend = true;
+    }
+
     // CSS filters (wrap entire element content)
     if !element.filters.is_empty() {
         commands.push(DrawCommand::PushFilter {
@@ -246,6 +259,19 @@ fn emit_commands(
             corner_radii: element.corner_radii,
             filters: element.backdrop_filters.clone(),
         });
+    }
+
+    // Skip drawing for invisible elements (but still recurse children)
+    if !element.visible {
+        emit_children_sorted(node, element, animator, commands);
+        // Pop in reverse order
+        if pop_filter { commands.push(DrawCommand::PopFilter); }
+        if pop_blend { commands.push(DrawCommand::PopBlendMode); }
+        if pop_layer { commands.push(DrawCommand::PopLayer); }
+        if pop_clip { commands.push(DrawCommand::PopClip); }
+        if pop_transform { commands.push(DrawCommand::PopTransform); }
+        if pop_translate { commands.push(DrawCommand::PopTranslate); }
+        return;
     }
 
     // Outset box shadows (drawn behind the element)
@@ -470,6 +496,9 @@ fn emit_commands(
     // Pop in reverse order of push
     if pop_filter {
         commands.push(DrawCommand::PopFilter);
+    }
+    if pop_blend {
+        commands.push(DrawCommand::PopBlendMode);
     }
     if pop_layer {
         commands.push(DrawCommand::PopLayer);

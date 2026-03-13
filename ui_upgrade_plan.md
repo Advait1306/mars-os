@@ -41,7 +41,14 @@ Phase 4 (transforms) is DONE:
 - Builder methods: rotate(), scale(), scale_xy(), translate(), skew(), transform_origin()
 - Combined transforms applied in CSS order via sequential canvas operations
 
-The next phase to work on is **Phase 5** (text enhancements — already mostly done, verify).
+Phase 5 (text enhancements) was already fully implemented in prior work.
+
+Phase 6 (remaining properties) is DONE:
+- visibility: `visible` field on Element, `hidden()` builder — invisible elements skip drawing but children still render
+- BlendMode enum (16 CSS blend modes mapped to Skia) with PushBlendMode/PopBlendMode
+- Color utilities: `from_hex()`, `from_hsl()`, `from_hsla()`, `with_alpha()`, `lighter()`, `darker()`
+
+**Plan 4 is now COMPLETE.** All 6 phases implemented. Next plan: **5-svg-rendering**.
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

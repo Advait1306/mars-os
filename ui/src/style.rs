@@ -294,3 +294,24 @@ pub enum Transform {
     Skew(f32, f32),     // degrees
     Matrix([f32; 6]),   // CSS matrix(a,b,c,d,e,f)
 }
+
+/// CSS mix-blend-mode values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
