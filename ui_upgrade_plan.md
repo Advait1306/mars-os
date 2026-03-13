@@ -4,6 +4,19 @@ You have to implement plans in ./plans/ui-upgrade. Some plans are already comple
 
 NOTE: Plan 1 & 2 are already complete before starting this loop.
 
+### Plan 1-text-layout: IN PROGRESS
+Phases 1-7 were already complete. Phase 8 is now DONE:
+- `font_features: Vec<(String, i32)>` field on Element and TextSpan
+- `font_variations: Vec<(String, f32)>` field on Element and TextSpan
+- `.font_feature("tnum", 1)` builder method for OpenType features (tabular numbers, ligature control)
+- `.font_variation("wght", 700.0)` builder method for variable font axes (weight, width, etc.)
+- Applied via `TextStyle::add_font_feature()` in renderer for both Text and RichText
+- Variable fonts via `TextStyle::set_font_arguments()` with `VariationPosition` coordinates
+- Per-span font features and variations in RichText for mixed typography
+- Threaded through DrawCommand::Text and DrawCommand::RichText
+
+Remaining: Phase 9 (BiDi/i18n), Phase 10 (inline placeholders), Phase 11 (perf optimization)
+
 ## Current State
 ### Plan 3-events: DONE (remaining tasks need VM)
 Phases 1-6, 8, 10, 11, and 12 of the event system plan (plans/ui-upgrades/3-events.md) are DONE.

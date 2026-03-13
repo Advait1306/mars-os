@@ -96,6 +96,8 @@ pub struct TextSpan {
     pub background: Option<Color>,
     pub text_decoration_color: Option<Color>,
     pub text_decoration_style: Option<TextDecorationStyle>,
+    pub font_features: Vec<(String, i32)>,
+    pub font_variations: Vec<(String, f32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -259,6 +261,8 @@ pub struct Element {
     pub text_decoration_color: Option<Color>,
     pub word_spacing: f32,
     pub text_shadow: Vec<(Color, (f32, f32), f64)>,
+    pub font_features: Vec<(String, i32)>,
+    pub font_variations: Vec<(String, f32)>,
 
     // Text input cursor state (set by the view when the input is focused)
     pub cursor_offset: Option<usize>,
@@ -468,6 +472,8 @@ impl Default for Element {
             text_decoration_color: None,
             word_spacing: 0.0,
             text_shadow: Vec::new(),
+            font_features: Vec::new(),
+            font_variations: Vec::new(),
             cursor_offset: None,
             selection_range: None,
             scroll_offset: 0.0,
@@ -1403,6 +1409,16 @@ impl Element {
         self.font_italic = true;
         self
     }
+    /// Add an OpenType font feature (e.g., "tnum" for tabular numbers, "liga" for ligatures).
+    pub fn font_feature(mut self, tag: &str, value: i32) -> Self {
+        self.font_features.push((tag.to_string(), value));
+        self
+    }
+    /// Add a variable font axis value (e.g., "wght" for weight, "wdth" for width).
+    pub fn font_variation(mut self, axis: &str, value: f32) -> Self {
+        self.font_variations.push((axis.to_string(), value));
+        self
+    }
     pub fn line_height(mut self, lh: f32) -> Self {
         self.line_height = Some(lh);
         self
@@ -1894,6 +1910,8 @@ impl SpanBuilder {
                 background: None,
                 text_decoration_color: None,
                 text_decoration_style: None,
+                font_features: Vec::new(),
+                font_variations: Vec::new(),
             },
         }
     }
@@ -1946,6 +1964,14 @@ impl SpanBuilder {
     }
     pub fn text_decoration_style(mut self, style: TextDecorationStyle) -> Self {
         self.span.text_decoration_style = Some(style);
+        self
+    }
+    pub fn font_feature(mut self, tag: &str, value: i32) -> Self {
+        self.span.font_features.push((tag.to_string(), value));
+        self
+    }
+    pub fn font_variation(mut self, axis: &str, value: f32) -> Self {
+        self.span.font_variations.push((axis.to_string(), value));
         self
     }
 }

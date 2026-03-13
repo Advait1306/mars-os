@@ -54,6 +54,7 @@ impl SkiaRenderer {
                     font_weight, font_italic, line_height, text_align, max_lines, text_overflow_ellipsis,
                     letter_spacing, word_spacing, underline, strikethrough, overline,
                     text_decoration_style, text_decoration_color, text_shadow,
+                    font_features, font_variations,
                     cursor_byte_offset, selection_byte_range, scroll_offset,
                     preedit_byte_range } => {
                     self.draw_text(canvas, text, position, *font_size, color, *max_width,
@@ -61,7 +62,8 @@ impl SkiaRenderer {
                         *text_align, *max_lines, *text_overflow_ellipsis, *letter_spacing,
                         *word_spacing, *underline, *strikethrough, *overline,
                         *text_decoration_style, text_decoration_color.as_ref(),
-                        text_shadow, *cursor_byte_offset, *selection_byte_range, *scroll_offset,
+                        text_shadow, font_features, font_variations,
+                        *cursor_byte_offset, *selection_byte_range, *scroll_offset,
                         *preedit_byte_range);
                 }
                 DrawCommand::Path { data, bounds } => {
@@ -208,11 +210,12 @@ impl SkiaRenderer {
                 }
                 DrawCommand::RichText { spans, position, max_width, font_size, color,
                     font_family, font_weight, font_italic, line_height, text_align,
-                    max_lines, text_overflow_ellipsis, letter_spacing, word_spacing, text_shadow } => {
+                    max_lines, text_overflow_ellipsis, letter_spacing, word_spacing, text_shadow,
+                    font_features, font_variations } => {
                     self.draw_rich_text(canvas, spans, position, *max_width, *font_size, color,
                         font_family.as_deref(), *font_weight, *font_italic, *line_height,
                         *text_align, *max_lines, *text_overflow_ellipsis, *letter_spacing,
-                        *word_spacing, text_shadow);
+                        *word_spacing, text_shadow, font_features, font_variations);
                 }
                 DrawCommand::MultilineText { text, bounds, font_size, color,
                     font_family, font_weight, font_italic, line_height,
@@ -568,6 +571,8 @@ impl SkiaRenderer {
         text_decoration_style: Option<crate::style::TextDecorationStyle>,
         text_decoration_color: Option<&Color>,
         text_shadow: &[(Color, (f32, f32), f64)],
+        font_features: &[(String, i32)],
+        font_variations: &[(String, f32)],
         cursor_byte_offset: Option<usize>,
         selection_byte_range: Option<(usize, usize)>,
         scroll_offset: f32,
@@ -648,6 +653,34 @@ impl SkiaRenderer {
                 (*dx, *dy),
                 *blur,
             ));
+        }
+
+        // Font features (OpenType)
+        for (tag, value) in font_features {
+            text_style.add_font_feature(tag, *value);
+        }
+
+        // Variable font axes
+        if !font_variations.is_empty() {
+            let coords: Vec<skia_safe::font_arguments::variation_position::Coordinate> =
+                font_variations.iter().map(|(axis, value)| {
+                    let bytes = axis.as_bytes();
+                    let tag = skia_safe::FourByteTag::from_chars(
+                        bytes.get(0).copied().unwrap_or(b' ') as char,
+                        bytes.get(1).copied().unwrap_or(b' ') as char,
+                        bytes.get(2).copied().unwrap_or(b' ') as char,
+                        bytes.get(3).copied().unwrap_or(b' ') as char,
+                    );
+                    skia_safe::font_arguments::variation_position::Coordinate {
+                        axis: tag,
+                        value: *value,
+                    }
+                }).collect();
+            let fa = skia_safe::FontArguments::new()
+                .set_variation_design_position(skia_safe::font_arguments::VariationPosition {
+                    coordinates: &coords,
+                });
+            text_style.set_font_arguments(&fa);
         }
 
         para_style.set_text_style(&text_style);
@@ -769,6 +802,8 @@ impl SkiaRenderer {
         letter_spacing: f32,
         word_spacing: f32,
         text_shadow: &[(Color, (f32, f32), f64)],
+        font_features: &[(String, i32)],
+        font_variations: &[(String, f32)],
     ) {
         use skia_safe::textlayout::{TextDecoration, TextShadow};
         use skia_safe::font_style::{Weight, Width, Slant};
@@ -809,6 +844,32 @@ impl SkiaRenderer {
         }
         if word_spacing != 0.0 {
             base_style.set_word_spacing(word_spacing);
+        }
+        // Font features (OpenType) on base style
+        for (tag, value) in font_features {
+            base_style.add_font_feature(tag, *value);
+        }
+        // Variable font axes on base style
+        if !font_variations.is_empty() {
+            let coords: Vec<skia_safe::font_arguments::variation_position::Coordinate> =
+                font_variations.iter().map(|(axis, value)| {
+                    let bytes = axis.as_bytes();
+                    let tag = skia_safe::FourByteTag::from_chars(
+                        bytes.get(0).copied().unwrap_or(b' ') as char,
+                        bytes.get(1).copied().unwrap_or(b' ') as char,
+                        bytes.get(2).copied().unwrap_or(b' ') as char,
+                        bytes.get(3).copied().unwrap_or(b' ') as char,
+                    );
+                    skia_safe::font_arguments::variation_position::Coordinate {
+                        axis: tag,
+                        value: *value,
+                    }
+                }).collect();
+            let fa = skia_safe::FontArguments::new()
+                .set_variation_design_position(skia_safe::font_arguments::VariationPosition {
+                    coordinates: &coords,
+                });
+            base_style.set_font_arguments(&fa);
         }
         for (shadow_color, (dx, dy), blur) in text_shadow {
             base_style.add_shadow(TextShadow::new(
@@ -859,6 +920,33 @@ impl SkiaRenderer {
                 let mut bg_paint = Paint::default();
                 bg_paint.set_color(to_skia_color(&bg));
                 style.set_background_paint(&bg_paint);
+            }
+
+            // Per-span font features
+            for (tag, value) in &span.font_features {
+                style.add_font_feature(tag, *value);
+            }
+            // Per-span variable font axes
+            if !span.font_variations.is_empty() {
+                let coords: Vec<skia_safe::font_arguments::variation_position::Coordinate> =
+                    span.font_variations.iter().map(|(axis, value)| {
+                        let bytes = axis.as_bytes();
+                        let tag = skia_safe::FourByteTag::from_chars(
+                            bytes.get(0).copied().unwrap_or(b' ') as char,
+                            bytes.get(1).copied().unwrap_or(b' ') as char,
+                            bytes.get(2).copied().unwrap_or(b' ') as char,
+                            bytes.get(3).copied().unwrap_or(b' ') as char,
+                        );
+                        skia_safe::font_arguments::variation_position::Coordinate {
+                            axis: tag,
+                            value: *value,
+                        }
+                    }).collect();
+                let fa = skia_safe::FontArguments::new()
+                    .set_variation_design_position(skia_safe::font_arguments::VariationPosition {
+                        coordinates: &coords,
+                    });
+                style.set_font_arguments(&fa);
             }
 
             builder.push_style(&style);
