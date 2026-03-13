@@ -6,10 +6,11 @@
 
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use crate::app::View;
+use crate::app::{PopupConfig, View};
+use crate::element::Element;
 use crate::handle::{Handle, MutationQueue};
 
 /// Unique identifier for a reactive field.
@@ -84,12 +85,25 @@ pub fn is_dirty() -> bool {
     DIRTY_SET.with(|d| !d.borrow().is_empty())
 }
 
+/// A pending popup request collected during `render()`.
+#[derive(Debug)]
+pub enum PopupRequest {
+    Open { key: String, config: PopupConfig },
+    Close { key: String },
+}
+
 /// Render context passed to `View::render()` for dependency tracking and handle access.
 pub struct RenderContext {
     mutations_any: Rc<dyn Any>,
     surface_width: u32,
     surface_height: u32,
     requested_size: Option<(u32, u32)>,
+    /// Popup open/close requests accumulated during this render.
+    popup_requests: Vec<PopupRequest>,
+    /// Element trees provided for open popups.
+    popup_elements: HashMap<String, Element>,
+    /// Snapshot of currently open popup keys (set before render() is called).
+    open_popups: HashSet<String>,
 }
 
 impl RenderContext {
@@ -99,6 +113,9 @@ impl RenderContext {
             surface_width,
             surface_height,
             requested_size: None,
+            popup_requests: Vec::new(),
+            popup_elements: HashMap::new(),
+            open_popups: HashSet::new(),
         }
     }
 
@@ -138,5 +155,53 @@ impl RenderContext {
             .downcast::<MutationQueue<V>>()
             .expect("Handle type mismatch -- ensure V matches the view type passed to ui::run()");
         Handle::new(mutations)
+    }
+
+    // --- Popup API ---
+
+    /// Open a popup surface. If already open with this key, the config is updated.
+    /// The popup is not visible until `render_popup()` provides its element tree.
+    pub fn open_popup(&mut self, key: &str, config: PopupConfig) {
+        self.popup_requests.push(PopupRequest::Open {
+            key: key.to_string(),
+            config,
+        });
+    }
+
+    /// Close a popup surface by key. No-op if not open.
+    pub fn close_popup(&mut self, key: &str) {
+        self.popup_requests.push(PopupRequest::Close {
+            key: key.to_string(),
+        });
+    }
+
+    /// Returns true if a popup with this key is currently open.
+    pub fn is_popup_open(&self, key: &str) -> bool {
+        self.open_popups.contains(key)
+    }
+
+    /// Provide the element tree for an open popup. Called during `render()`.
+    /// If the popup isn't open (or hasn't been opened this frame), this stores the
+    /// element for when the popup surface is ready.
+    pub fn render_popup(&mut self, key: &str, element: Element) {
+        self.popup_elements.insert(key.to_string(), element);
+    }
+
+    /// Set the snapshot of currently open popup keys.
+    /// Called by the framework before `render()`.
+    pub fn set_open_popups(&mut self, keys: HashSet<String>) {
+        self.open_popups = keys;
+    }
+
+    /// Take all popup requests accumulated during this render.
+    /// Called by the framework after `render()`.
+    pub fn take_popup_requests(&mut self) -> Vec<PopupRequest> {
+        std::mem::take(&mut self.popup_requests)
+    }
+
+    /// Take all popup element trees accumulated during this render.
+    /// Called by the framework after `render()`.
+    pub fn take_popup_elements(&mut self) -> HashMap<String, Element> {
+        std::mem::take(&mut self.popup_elements)
     }
 }

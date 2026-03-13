@@ -279,9 +279,17 @@ Phase 12 (File Input — pre-built) is DONE (partial):
 - Closed-state rendering: "Choose File" button + file count label
 - Remaining: native file dialog integration via DBus/portal (needs VM)
 
-Remaining phases needing VM: Phase 6 (popup infrastructure), Phase 9 (IME protocol binding), popup portions of Phases 10-12.
+Phase 6 (Popup Infrastructure — pre-built) is DONE (partial):
+- `PopupConfig` struct with anchor, size, margin, keyboard interactivity, on_focus_lost callback
+- Builder API: `PopupConfig::new()`, `.margin()`, `.keyboard()`, `.on_focus_lost()`
+- `PopupRequest` enum (Open/Close) for request batching
+- `RenderContext` popup methods: `open_popup()`, `close_popup()`, `is_popup_open()`, `render_popup()`
+- Popup request/element collection: `set_open_popups()`, `take_popup_requests()`, `take_popup_elements()`
+- Remaining: `PopupState` in wayland.rs, LayerSurface creation, multi-surface dispatch (needs VM)
 
-**Plan 6 Phases 1-8 + Theming + Phases 10-12 (pre-built) are DONE.**
+Remaining phases needing VM: Phase 6 (popup surface creation), Phase 9 (IME protocol binding), popup rendering of Phases 10-12.
+
+**Plan 6 Phases 1-8 + Theming + Phase 6 types + Phases 10-12 (pre-built) are DONE.**
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

@@ -28,8 +28,8 @@ pub use color::*;
 pub use element::*;
 pub use style::*;
 pub use display_list::Point;
-pub use app::{SurfaceConfig, View, WaylandContext};
-pub use reactive::{Reactive, RenderContext};
+pub use app::{PopupConfig, SurfaceConfig, View, WaylandContext};
+pub use reactive::{PopupRequest, Reactive, RenderContext};
 pub use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 pub use handle::Handle;
 pub use input::{
