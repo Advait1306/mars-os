@@ -263,6 +263,10 @@ pub struct Element {
     pub selection_range: Option<(usize, usize)>,
     pub scroll_offset: f32,
 
+    // IME preedit/composition state
+    pub preedit_text: Option<String>,
+    pub preedit_cursor: Option<usize>,
+
     // Animation
     pub animate: Option<Animation>,
     pub animate_layout: bool,
@@ -465,6 +469,8 @@ impl Default for Element {
             cursor_offset: None,
             selection_range: None,
             scroll_offset: 0.0,
+            preedit_text: None,
+            preedit_cursor: None,
             animate: None,
             animate_layout: false,
             layout_animation: None,
@@ -1642,6 +1648,18 @@ impl Element {
     }
     pub fn cursor(mut self, style: CursorStyle) -> Self {
         self.cursor = Some(style);
+        self
+    }
+
+    /// Set preedit (IME composition) text to display inline at the cursor.
+    pub fn preedit(mut self, text: &str, cursor: Option<usize>) -> Self {
+        if text.is_empty() {
+            self.preedit_text = None;
+            self.preedit_cursor = None;
+        } else {
+            self.preedit_text = Some(text.to_string());
+            self.preedit_cursor = cursor;
+        }
         self
     }
 

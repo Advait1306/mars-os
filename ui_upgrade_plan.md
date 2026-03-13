@@ -5,10 +5,18 @@ You have to implement plans in ./plans/ui-upgrade. Some plans are already comple
 NOTE: Plan 1 & 2 are already complete before starting this loop.
 
 ## Current State
-### Plan 3-events: DONE (remaining tasks need VM or rendering pipeline)
+### Plan 3-events: DONE (remaining tasks need VM)
 Phases 1-6, 8, 10, 11, and 12 of the event system plan (plans/ui-upgrades/3-events.md) are DONE.
+
+Phase 7 Task 6 (Render preedit text) is DONE:
+- Added `preedit_text` and `preedit_cursor` fields to Element with `preedit()` builder method
+- Added `preedit_byte_range` field to DrawCommand::Text
+- Preedit text is composed inline at the cursor position in TextInput display text
+- Cursor is positioned within the preedit text using `preedit_cursor`
+- Renderer draws underline decoration beneath preedit text range
+- Selection is cleared during composition (standard IME behavior)
+
 The remaining deferred tasks are:
-- **Phase 7 Task 6**: Render preedit text (needs rendering pipeline changes)
 - **Phase 9 Tasks 6-8**: Drag ghost rendering + external DnD via wl_data_device (needs VM)
 - **Phase 10 Tasks 5-7**: Wayland clipboard integration via wl_data_device (needs VM)
 

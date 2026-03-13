@@ -52,13 +52,15 @@ impl SkiaRenderer {
                     font_weight, font_italic, line_height, text_align, max_lines, text_overflow_ellipsis,
                     letter_spacing, word_spacing, underline, strikethrough, overline,
                     text_decoration_style, text_decoration_color, text_shadow,
-                    cursor_byte_offset, selection_byte_range, scroll_offset } => {
+                    cursor_byte_offset, selection_byte_range, scroll_offset,
+                    preedit_byte_range } => {
                     self.draw_text(canvas, text, position, *font_size, color, *max_width,
                         font_family.as_deref(), *font_weight, *font_italic, *line_height,
                         *text_align, *max_lines, *text_overflow_ellipsis, *letter_spacing,
                         *word_spacing, *underline, *strikethrough, *overline,
                         *text_decoration_style, text_decoration_color.as_ref(),
-                        text_shadow, *cursor_byte_offset, *selection_byte_range, *scroll_offset);
+                        text_shadow, *cursor_byte_offset, *selection_byte_range, *scroll_offset,
+                        *preedit_byte_range);
                 }
                 DrawCommand::Path { data, bounds } => {
                     self.draw_path(canvas, data, bounds);
@@ -567,6 +569,7 @@ impl SkiaRenderer {
         cursor_byte_offset: Option<usize>,
         selection_byte_range: Option<(usize, usize)>,
         scroll_offset: f32,
+        preedit_byte_range: Option<(usize, usize)>,
     ) {
         use skia_safe::textlayout::{TextDecoration, TextShadow};
         use skia_safe::font_style::{Weight, Width, Slant};
@@ -654,7 +657,7 @@ impl SkiaRenderer {
         let mut paragraph = builder.build();
         paragraph.layout(max_width);
 
-        let has_input_state = cursor_byte_offset.is_some() || selection_byte_range.is_some() || scroll_offset != 0.0;
+        let has_input_state = cursor_byte_offset.is_some() || selection_byte_range.is_some() || scroll_offset != 0.0 || preedit_byte_range.is_some();
 
         if has_input_state {
             // Text input: clip to bounds, apply scroll offset, draw selection/cursor
@@ -690,6 +693,31 @@ impl SkiaRenderer {
 
             // Paint text
             paragraph.paint(canvas, (text_x, text_y));
+
+            // Draw preedit underline (IME composition indicator)
+            if let Some((preedit_start, preedit_end)) = preedit_byte_range {
+                if preedit_start < preedit_end && preedit_end <= text.len() {
+                    let rects = paragraph.get_rects_for_range(
+                        preedit_start..preedit_end,
+                        RectHeightStyle::Tight,
+                        RectWidthStyle::Tight,
+                    );
+                    let mut underline_paint = Paint::default();
+                    underline_paint.set_color(to_skia_color(color));
+                    underline_paint.set_anti_alias(true);
+                    underline_paint.set_stroke_width(1.0);
+                    underline_paint.set_style(skia_safe::paint::Style::Stroke);
+                    for text_box in &rects {
+                        let r = text_box.rect;
+                        let y = text_y + r.bottom - 1.0;
+                        canvas.draw_line(
+                            (text_x + r.left, y),
+                            (text_x + r.right, y),
+                            &underline_paint,
+                        );
+                    }
+                }
+            }
 
             // Draw cursor
             if let Some(offset) = cursor_byte_offset {

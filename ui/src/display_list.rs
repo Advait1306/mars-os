@@ -59,6 +59,9 @@ pub enum DrawCommand {
         cursor_byte_offset: Option<usize>,
         selection_byte_range: Option<(usize, usize)>,
         scroll_offset: f32,
+        /// Byte range of preedit (IME composition) text within the display string.
+        /// The renderer should draw this range with an underline decoration.
+        preedit_byte_range: Option<(usize, usize)>,
     },
     Image {
         source: ImageSource,
@@ -312,7 +315,7 @@ fn emit_commands(
 
     // Skip drawing for invisible elements (but still recurse children)
     if !element.visible {
-        emit_children_sorted(node, element, animator, commands);
+        emit_children_sorted(node, element, animator, theme, commands);
         // Pop in reverse order
         if pop_filter { commands.push(DrawCommand::PopFilter); }
         if pop_blend { commands.push(DrawCommand::PopBlendMode); }
@@ -403,7 +406,7 @@ fn emit_commands(
                 y: bounds.y,
             },
             font_size: element.font_size,
-            color: element.color.unwrap_or(crate::color::WHITE),
+            color: element.color.unwrap_or(theme.text),
             max_width: bounds.width,
             font_family: element.font_family.clone(),
             font_weight: element.font_weight,
@@ -423,6 +426,7 @@ fn emit_commands(
             cursor_byte_offset: None,
             selection_byte_range: None,
             scroll_offset: 0.0,
+            preedit_byte_range: None,
         });
     }
 
@@ -436,7 +440,7 @@ fn emit_commands(
             },
             max_width: bounds.width,
             font_size: element.font_size,
-            color: element.color.unwrap_or(crate::color::WHITE),
+            color: element.color.unwrap_or(theme.text),
             font_family: element.font_family.clone(),
             font_weight: element.font_weight,
             font_italic: element.font_italic,
@@ -470,9 +474,29 @@ fn emit_commands(
 
     // TextInput
     if let ElementKind::TextInput { ref value, ref placeholder } = element.kind {
-        let display_text = if value.is_empty() { placeholder } else { value };
-        let text_color = if value.is_empty() {
-            let base = element.color.unwrap_or(crate::color::WHITE);
+        // Build display text, potentially with preedit text inserted at cursor
+        let has_preedit = element.preedit_text.as_ref().map_or(false, |t| !t.is_empty());
+        let (display_text, preedit_byte_range) = if has_preedit {
+            let preedit = element.preedit_text.as_ref().unwrap();
+            let cursor_char = element.cursor_offset.unwrap_or(value.chars().count());
+            let insert_byte = value.char_indices()
+                .nth(cursor_char)
+                .map(|(i, _)| i)
+                .unwrap_or(value.len());
+            let mut composed = String::with_capacity(value.len() + preedit.len());
+            composed.push_str(&value[..insert_byte]);
+            let preedit_start = composed.len();
+            composed.push_str(preedit);
+            let preedit_end = composed.len();
+            composed.push_str(&value[insert_byte..]);
+            (composed, Some((preedit_start, preedit_end)))
+        } else {
+            (if value.is_empty() { placeholder.clone() } else { value.clone() }, None)
+        };
+
+        let is_placeholder = value.is_empty() && !has_preedit;
+        let text_color = if is_placeholder {
+            let base = element.color.unwrap_or(theme.text);
             Color {
                 r: base.r,
                 g: base.g,
@@ -480,21 +504,33 @@ fn emit_commands(
                 a: (base.a as f32 * 0.4) as u8,
             }
         } else {
-            element.color.unwrap_or(crate::color::WHITE)
+            element.color.unwrap_or(theme.text)
         };
 
-        let cursor_byte_offset = element.cursor_offset.map(|char_idx| {
-            if value.is_empty() {
-                0
-            } else {
-                value.char_indices()
-                    .nth(char_idx)
-                    .map(|(byte_idx, _)| byte_idx)
-                    .unwrap_or(value.len())
-            }
-        });
+        let cursor_byte_offset = if has_preedit {
+            // Position cursor within the preedit text
+            let (preedit_start, _) = preedit_byte_range.unwrap();
+            let preedit = element.preedit_text.as_ref().unwrap();
+            let preedit_cursor_char = element.preedit_cursor.unwrap_or(preedit.chars().count());
+            let offset_in_preedit = preedit.char_indices()
+                .nth(preedit_cursor_char)
+                .map(|(i, _)| i)
+                .unwrap_or(preedit.len());
+            Some(preedit_start + offset_in_preedit)
+        } else {
+            element.cursor_offset.map(|char_idx| {
+                if value.is_empty() {
+                    0
+                } else {
+                    value.char_indices()
+                        .nth(char_idx)
+                        .map(|(byte_idx, _)| byte_idx)
+                        .unwrap_or(value.len())
+                }
+            })
+        };
 
-        let selection_byte_range = if !value.is_empty() {
+        let selection_byte_range = if !value.is_empty() && !has_preedit {
             element.selection_range.map(|(start_char, end_char)| {
                 let start_byte = value.char_indices()
                     .nth(start_char)
@@ -511,7 +547,7 @@ fn emit_commands(
         };
 
         commands.push(DrawCommand::Text {
-            text: display_text.clone(),
+            text: display_text,
             position: Point {
                 x: bounds.x,
                 y: bounds.y,
@@ -537,6 +573,7 @@ fn emit_commands(
             cursor_byte_offset,
             selection_byte_range,
             scroll_offset: element.scroll_offset,
+            preedit_byte_range,
         });
     }
 
@@ -544,7 +581,7 @@ fn emit_commands(
     if let ElementKind::Textarea { ref value, ref placeholder } = element.kind {
         let display_text = if value.is_empty() { placeholder } else { value };
         let text_color = if value.is_empty() {
-            let base = element.color.unwrap_or(crate::color::WHITE);
+            let base = element.color.unwrap_or(theme.text);
             Color {
                 r: base.r,
                 g: base.g,
@@ -552,7 +589,7 @@ fn emit_commands(
                 a: (base.a as f32 * 0.4) as u8,
             }
         } else {
-            element.color.unwrap_or(crate::color::WHITE)
+            element.color.unwrap_or(theme.text)
         };
 
         // Background
@@ -670,6 +707,7 @@ fn emit_commands(
             cursor_byte_offset: None,
             selection_byte_range: None,
             scroll_offset: 0.0,
+            preedit_byte_range: None,
         });
     }
 
@@ -747,6 +785,7 @@ fn emit_commands(
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
+                preedit_byte_range: None,
             });
         }
     }
@@ -804,6 +843,7 @@ fn emit_commands(
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
+                preedit_byte_range: None,
             });
         }
     }
@@ -861,6 +901,7 @@ fn emit_commands(
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
+                preedit_byte_range: None,
             });
         }
     }
@@ -1104,7 +1145,7 @@ fn emit_select(
         if idx < options.len() {
             (
                 options[idx].label.clone(),
-                element.color.unwrap_or(crate::color::WHITE),
+                element.color.unwrap_or(theme.text),
             )
         } else {
             (
@@ -1143,6 +1184,7 @@ fn emit_select(
         cursor_byte_offset: None,
         selection_byte_range: None,
         scroll_offset: 0.0,
+        preedit_byte_range: None,
     });
 
     // Chevron (downward arrow)
@@ -1274,6 +1316,7 @@ fn emit_select(
                 cursor_byte_offset: None,
                 selection_byte_range: None,
                 scroll_offset: 0.0,
+                preedit_byte_range: None,
             });
 
             // Checkmark for selected option
