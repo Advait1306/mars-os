@@ -284,3 +284,13 @@ pub enum Filter {
         color: Color,
     },
 }
+
+/// CSS transform functions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Transform {
+    Translate(f32, f32),
+    Rotate(f32),        // degrees
+    Scale(f32, f32),
+    Skew(f32, f32),     // degrees
+    Matrix([f32; 6]),   // CSS matrix(a,b,c,d,e,f)
+}

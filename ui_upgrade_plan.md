@@ -34,7 +34,14 @@ Phase 3 (CSS filters) is DONE:
 - Builder methods: filter_blur(), filter_brightness(), filter_contrast(), etc.
 - Chained filter composition via input parameter (each filter feeds into next)
 
-The next phase to work on is **Phase 4** (transforms).
+Phase 4 (transforms) is DONE:
+- Transform enum (Translate, Rotate, Scale, Skew, Matrix)
+- transform_origin as fraction of element bounds (default center 0.5, 0.5)
+- PushTransform/PopTransform DrawCommands with origin-based application
+- Builder methods: rotate(), scale(), scale_xy(), translate(), skew(), transform_origin()
+- Combined transforms applied in CSS order via sequential canvas operations
+
+The next phase to work on is **Phase 5** (text enhancements — already mostly done, verify).
 
 ## Completed Phases Summary
 - Phase 1: Three-phase event propagation (capture/target/bubble) — DONE

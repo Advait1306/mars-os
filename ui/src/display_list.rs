@@ -4,7 +4,7 @@ use crate::element::{Element, ElementKind, ImageSource, TextSpan};
 use crate::layout::{LayoutNode, Rect};
 use crate::style::{
     Border, BorderStyle, CornerRadii, DisplayMode, Filter, FullBorder, Gradient, Outline,
-    TextAlign, TextDecorationStyle,
+    TextAlign, TextDecorationStyle, Transform,
 };
 
 #[derive(Debug, Clone)]
@@ -110,6 +110,12 @@ pub enum DrawCommand {
         offset: Point,
     },
     PopTranslate,
+    PushTransform {
+        transforms: Vec<Transform>,
+        /// Origin in absolute coordinates (computed from bounds + transform_origin fraction).
+        origin: Point,
+    },
+    PopTransform,
     RichText {
         spans: Vec<TextSpan>,
         position: Point,
@@ -177,6 +183,7 @@ fn emit_commands(
 
     // Track pops needed at the end
     let mut pop_translate = false;
+    let mut pop_transform = false;
     let mut pop_layer = false;
     let mut pop_clip = false;
     let mut pop_filter = false;
@@ -192,6 +199,19 @@ fn emit_commands(
             });
             pop_translate = true;
         }
+    }
+
+    // Transforms (applied before clip, after animation translate)
+    if !element.transforms.is_empty() {
+        let origin = Point {
+            x: bounds.x + bounds.width * element.transform_origin.0,
+            y: bounds.y + bounds.height * element.transform_origin.1,
+        };
+        commands.push(DrawCommand::PushTransform {
+            transforms: element.transforms.clone(),
+            origin,
+        });
+        pop_transform = true;
     }
 
     // Clip
@@ -456,6 +476,9 @@ fn emit_commands(
     }
     if pop_clip {
         commands.push(DrawCommand::PopClip);
+    }
+    if pop_transform {
+        commands.push(DrawCommand::PopTransform);
     }
     if pop_translate {
         commands.push(DrawCommand::PopTranslate);

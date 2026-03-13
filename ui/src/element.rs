@@ -8,7 +8,7 @@ use crate::input::{
 use crate::style::{
     AlignContent, Alignment, Border, BorderSide, BorderStyle, BoxShadow, CornerRadii, Dim,
     Direction, DisplayMode, Filter, FlexWrap, FullBorder, Gradient, GridAutoFlow, GridPlacement,
-    Justify, Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize,
+    Justify, Outline, Overflow, PositionType, TextAlign, TextDecorationStyle, TrackSize, Transform,
 };
 
 pub enum ElementKind {
@@ -118,6 +118,9 @@ pub struct Element {
     pub opacity: f32,
     pub filters: Vec<Filter>,
     pub backdrop_filters: Vec<Filter>,
+    pub transforms: Vec<Transform>,
+    /// Transform origin as fraction of element size (0.0–1.0). Default: center (0.5, 0.5).
+    pub transform_origin: (f32, f32),
     pub clip: bool,
 
     // Text-specific
@@ -291,6 +294,8 @@ impl Default for Element {
             opacity: 1.0,
             filters: Vec::new(),
             backdrop_filters: Vec::new(),
+            transforms: Vec::new(),
+            transform_origin: (0.5, 0.5),
             clip: false,
             font_size: 14.0,
             color: None,
@@ -922,6 +927,30 @@ impl Element {
     }
     pub fn backdrop_blur(mut self, radius: f32) -> Self {
         self.backdrop_filters.push(Filter::Blur(radius));
+        self
+    }
+    pub fn rotate(mut self, degrees: f32) -> Self {
+        self.transforms.push(Transform::Rotate(degrees));
+        self
+    }
+    pub fn scale(mut self, s: f32) -> Self {
+        self.transforms.push(Transform::Scale(s, s));
+        self
+    }
+    pub fn scale_xy(mut self, sx: f32, sy: f32) -> Self {
+        self.transforms.push(Transform::Scale(sx, sy));
+        self
+    }
+    pub fn translate(mut self, x: f32, y: f32) -> Self {
+        self.transforms.push(Transform::Translate(x, y));
+        self
+    }
+    pub fn skew(mut self, x_deg: f32, y_deg: f32) -> Self {
+        self.transforms.push(Transform::Skew(x_deg, y_deg));
+        self
+    }
+    pub fn transform_origin(mut self, x: f32, y: f32) -> Self {
+        self.transform_origin = (x, y);
         self
     }
     pub fn clip(mut self) -> Self {

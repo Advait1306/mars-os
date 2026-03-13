@@ -105,6 +105,37 @@ impl SkiaRenderer {
                 DrawCommand::PopTranslate => {
                     canvas.restore();
                 }
+                DrawCommand::PushTransform { transforms, origin } => {
+                    canvas.save();
+                    // Translate to origin, apply transforms, translate back
+                    canvas.translate((origin.x, origin.y));
+                    for t in transforms {
+                        match t {
+                            crate::style::Transform::Translate(x, y) => {
+                                canvas.translate((*x, *y));
+                            }
+                            crate::style::Transform::Rotate(deg) => {
+                                canvas.rotate(*deg, None);
+                            }
+                            crate::style::Transform::Scale(sx, sy) => {
+                                canvas.scale((*sx, *sy));
+                            }
+                            crate::style::Transform::Skew(x_deg, y_deg) => {
+                                canvas.skew(x_deg.to_radians().tan(), y_deg.to_radians().tan());
+                            }
+                            crate::style::Transform::Matrix(m) => {
+                                let mut mat = skia_safe::Matrix::new_identity();
+                                // CSS matrix(a,b,c,d,e,f) -> | a c e | / | b d f | / | 0 0 1 |
+                                mat.set_all(m[0], m[2], m[4], m[1], m[3], m[5], 0.0, 0.0, 1.0);
+                                canvas.concat(&mat);
+                            }
+                        }
+                    }
+                    canvas.translate((-origin.x, -origin.y));
+                }
+                DrawCommand::PopTransform => {
+                    canvas.restore();
+                }
                 DrawCommand::RichText { spans, position, max_width, font_size, color,
                     font_family, font_weight, font_italic, line_height, text_align,
                     max_lines, text_overflow_ellipsis, letter_spacing, word_spacing, text_shadow } => {
